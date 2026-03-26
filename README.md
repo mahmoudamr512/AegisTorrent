@@ -22,8 +22,8 @@
 [![Security](https://img.shields.io/snyk/vulnerabilities/github/mahmoudamr512/aegistorrent?style=flat-square&logo=snyk)](https://snyk.io/test/github/mahmoudamr512/aegistorrent)
 
 <!-- Tech Stack -->
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178c6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![Node.js](https://img.shields.io/badge/Node.js-20+-339933?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org)
+[![Rust](https://img.shields.io/badge/Rust-1.75+-DEA584?style=flat-square&logo=rust&logoColor=white)](https://www.rust-lang.org/)
+[![Tokio](https://img.shields.io/badge/Tokio-async%20runtime-blue?style=flat-square)](https://tokio.rs/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-818cf8?style=flat-square)](LICENSE)
 [![Version](https://img.shields.io/github/v/release/mahmoudamr512/aegistorrent?style=flat-square&logo=github&color=818cf8&label=version)](https://github.com/mahmoudamr512/aegistorrent/releases)
 
@@ -144,8 +144,8 @@ This is not a BitTorrent library wrapper. Every layer — transport, protocol fr
 ### Prerequisites
 
 ```bash
-node --version   # requires >= 20.0.0
-npm --version    # requires >= 10.0.0
+rustc --version   # requires >= 1.75.0
+cargo --version   # ships with rustc
 ```
 
 ### Install & Build
@@ -153,8 +153,7 @@ npm --version    # requires >= 10.0.0
 ```bash
 git clone https://github.com/mahmoudamr512/aegistorrent.git
 cd aegistorrent
-npm install
-npm run build
+cargo build --release
 ```
 
 ### Use
@@ -232,8 +231,8 @@ aegis stats
 - **Rarest-first** piece selection (swarm-optimal)
 - **Endgame mode** (eliminates last-mile stalls)
 - **Tit-for-tat** choking (self-enforcing fairness)
-- **epoll**-based I/O (100+ peers, one thread)
-- Async **disk write pool** (no event loop blocking)
+- **epoll/mio**-based I/O (100+ peers, one thread)
+- Async **disk write pool** (tokio::fs, off main loop)
 - Sequential mode for **streaming playback**
 
 </td>
@@ -272,7 +271,7 @@ Phase 1 — Foundation                                    [ In Progress ]
 Phase 2 — Real System                                   [ Planned ]
 ────────────────────────────────────────────────────────────────────────
   ⬜  Rarest-first piece scheduler (bitfield aggregation)
-  ⬜  Multi-peer concurrent download (epoll connection pool)
+  ⬜  Multi-peer concurrent download (tokio/mio connection pool)
   ⬜  Endgame mode trigger + CANCEL message handling
   ⬜  Choking / unchoking (tit-for-tat, optimistic unchoke)
   ⬜  Async disk write queue (separate thread pool)
@@ -315,43 +314,45 @@ aegistorrent/
 │
 ├── src/
 │   ├── core/
-│   │   ├── chunker.ts          # File → pieces → blocks (deterministic)
-│   │   ├── merkle.ts           # Merkle tree build + proof generation
-│   │   ├── scheduler.ts        # Rarest-first + endgame mode
-│   │   └── swarm.ts            # Piece rarity tracking across peers
+│   │   ├── chunker.rs          # File → pieces → blocks (deterministic)
+│   │   ├── merkle.rs           # Merkle tree build + proof generation
+│   │   ├── scheduler.rs        # Rarest-first + endgame mode
+│   │   └── swarm.rs            # Piece rarity tracking across peers
 │   │
 │   ├── network/
-│   │   ├── peer.ts             # Single peer connection + lifecycle
-│   │   ├── pool.ts             # epoll-based connection pool (100+ peers)
+│   │   ├── peer.rs             # Single peer connection + lifecycle
+│   │   ├── pool.rs             # epoll/mio-based connection pool (100+ peers)
 │   │   └── discovery/
-│   │       ├── tracker.ts      # HTTP tracker client
-│   │       ├── dht.ts          # Kademlia DHT (Phase 3)
-│   │       └── pex.ts          # Peer Exchange (Phase 3)
+│   │       ├── tracker.rs      # HTTP tracker client
+│   │       ├── dht.rs          # Kademlia DHT (Phase 3)
+│   │       └── pex.rs          # Peer Exchange (Phase 3)
 │   │
 │   ├── nat/
-│   │   ├── stun.ts             # External address discovery (Phase 4)
-│   │   └── punch.ts            # UDP hole punching + relay (Phase 4)
+│   │   ├── stun.rs             # External address discovery (Phase 4)
+│   │   └── punch.rs            # UDP hole punching + relay (Phase 4)
 │   │
 │   ├── protocol/
-│   │   ├── messages.ts         # Message type definitions + encoding
-│   │   ├── codec.ts            # Length-prefix framing: encode/decode
-│   │   └── state.ts            # FSM: DISCONNECTED → SEEDING
+│   │   ├── messages.rs         # Message type definitions + encoding
+│   │   ├── codec.rs            # Length-prefix framing: encode/decode
+│   │   └── state.rs            # FSM: DISCONNECTED → SEEDING
 │   │
 │   ├── storage/
-│   │   ├── store.ts            # Content-addressable block store
-│   │   └── writer.ts           # Async disk write pool (off event loop)
+│   │   ├── store.rs            # Content-addressable block store
+│   │   └── writer.rs           # Async disk write pool (tokio::fs)
 │   │
 │   ├── security/
-│   │   ├── reputation.ts       # Per-peer scoring, blacklist, decay
-│   │   └── crypto.ts           # SHA-256, keypair gen, DH exchange
+│   │   ├── reputation.rs       # Per-peer scoring, blacklist, decay
+│   │   └── crypto.rs           # SHA-256, keypair gen, DH exchange
 │   │
 │   ├── observability/
-│   │   ├── metrics.ts          # Prometheus counters / gauges / histograms
-│   │   └── logger.ts           # Structured JSON logger (leveled)
+│   │   ├── metrics.rs          # Prometheus counters / gauges / histograms
+│   │   └── logger.rs           # Structured JSON logger (tracing)
 │   │
-│   └── cli/
-│       ├── index.ts            # CLI entry point (commander)
-│       └── dashboard.ts        # Real-time terminal dashboard (blessed)
+│   ├── cli/
+│   │   ├── main.rs             # CLI entry point (clap)
+│   │   └── dashboard.rs        # Real-time terminal dashboard (ratatui)
+│   │
+│   └── lib.rs                  # Crate root, module declarations
 │
 ├── tests/
 │   ├── unit/                   # Pure function tests (chunker, Merkle, codec)
@@ -372,6 +373,7 @@ aegistorrent/
 │       ├── bug_report.md
 │       └── feature_request.md
 │
+├── Cargo.toml                  # Dependencies + workspace config
 ├── CONTRIBUTING.md
 ├── LICENSE
 └── README.md
@@ -383,19 +385,19 @@ aegistorrent/
 
 ```bash
 # Run everything
-npm test
+cargo test
 
 # Unit tests (fast, no network)
-npm run test:unit
+cargo test --lib
 
 # Integration tests (spins up two local peers)
-npm run test:integration
+cargo test --test integration
 
 # Chaos suite (requires Docker)
-npm run test:chaos
+cargo test --test chaos
 
-# Coverage report
-npm run test:coverage
+# Coverage report (requires cargo-llvm-cov)
+cargo llvm-cov --html
 ```
 
 ### Chaos Test Matrix
@@ -431,11 +433,11 @@ AegisTorrent is a learning-first systems project. If you're studying distributed
 
 ```bash
 # Fork, clone, branch
-git clone https://github.com/YOUR_mahmoudamr512/aegistorrent.git
+git clone https://github.com/YOUR_USERNAME/aegistorrent.git
 git checkout -b feat/kademlia-routing-table
 
 # Make changes, add tests
-npm run test
+cargo test
 
 # Commit with conventional commits
 git commit -m "feat(dht): implement Kademlia k-bucket routing table"

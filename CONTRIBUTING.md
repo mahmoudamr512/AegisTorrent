@@ -17,9 +17,8 @@ Thank you for your interest in contributing. AegisTorrent is a learning-first sy
 ```bash
 git clone https://github.com/mahmoudamr512/aegistorrent.git
 cd aegistorrent
-npm install
-npm run build
-npm test
+cargo build
+cargo test
 ```
 
 ---
@@ -30,8 +29,9 @@ npm test
 2. **Branch** from `main`: `git checkout -b feat/your-feature-name`
 3. **Code** — keep changes focused and scoped
 4. **Test** — add unit or integration tests for new logic
-5. **Commit** using [conventional commits](https://www.conventionalcommits.org/)
-6. **Push** and open a PR against `main`
+5. **Lint** — run `cargo clippy` and `cargo fmt --check`
+6. **Commit** using [conventional commits](https://www.conventionalcommits.org/)
+7. **Push** and open a PR against `main`
 
 ---
 
@@ -50,10 +50,12 @@ Valid types: `feat`, `fix`, `docs`, `test`, `refactor`, `perf`, `chore`
 
 ## Code standards
 
-- TypeScript strict mode — no `any`, no suppressed errors
-- All public functions have JSDoc comments
-- New modules need a corresponding test file
-- No external runtime dependencies without discussion
+- All code must pass `cargo clippy` with no warnings
+- All public functions and types have `///` doc comments
+- New modules need corresponding unit tests (`#[cfg(test)]` module)
+- No `unsafe` without justification and review
+- No external crate dependencies without discussion
+- Format with `cargo fmt` before committing
 
 ---
 
