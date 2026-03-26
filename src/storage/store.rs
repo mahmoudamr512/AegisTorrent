@@ -36,8 +36,13 @@ impl TorrentInfo {
     }
 
     pub fn bitfield_bytes(&self) -> Vec<u8> {
-        let byte_count = (self.piece_count as usize).div_ceil(8);
-        vec![0xFF; byte_count]
+        let count = self.piece_count as usize;
+        let byte_count = count.div_ceil(8);
+        let mut bytes = vec![0u8; byte_count];
+        for i in 0..count {
+            bytes[i / 8] |= 1 << (7 - (i % 8));
+        }
+        bytes
     }
 }
 
@@ -142,14 +147,28 @@ mod tests {
     }
 
     #[test]
-    fn bitfield_bytes_all_ones() {
+    fn bitfield_bytes_correct_bits() {
         let mut f = NamedTempFile::new().unwrap();
         f.write_all(&vec![0u8; 256 * 1024 * 3]).unwrap();
 
         let (info, _) = TorrentInfo::from_file(f.path()).unwrap();
+        assert_eq!(info.piece_count, 3);
         let bf = info.bitfield_bytes();
 
         assert_eq!(bf.len(), 1);
-        assert!(bf.iter().all(|&b| b == 0xFF));
+        assert_eq!(bf[0], 0b1110_0000); // 3 pieces = 3 high bits set
+    }
+
+    #[test]
+    fn bitfield_bytes_full_byte() {
+        let mut f = NamedTempFile::new().unwrap();
+        f.write_all(&vec![0u8; 256 * 1024 * 8]).unwrap();
+
+        let (info, _) = TorrentInfo::from_file(f.path()).unwrap();
+        assert_eq!(info.piece_count, 8);
+        let bf = info.bitfield_bytes();
+
+        assert_eq!(bf.len(), 1);
+        assert_eq!(bf[0], 0xFF);
     }
 }

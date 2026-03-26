@@ -35,7 +35,7 @@ impl Leecher {
             other => return Err(format!("expected Bitfield, got type {:#x}", other.message_type()).into()),
         };
 
-        let piece_count = bitfield.len() * 8;
+        let piece_count: usize = bitfield.iter().map(|b| b.count_ones() as usize).sum();
         let our_bitfield = vec![0u8; bitfield.len()];
         conn.send(Message::Bitfield(our_bitfield.into())).await?;
         conn.send(Message::Interested).await?;
