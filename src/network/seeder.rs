@@ -48,10 +48,7 @@ impl Seeder {
         self.listen_on(listener).await
     }
 
-    pub async fn listen_on(
-        &self,
-        listener: TcpListener,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn listen_on(&self, listener: TcpListener) -> Result<(), Box<dyn std::error::Error>> {
         let pieces: Vec<Vec<u8>> = (0..self.info.piece_count)
             .map(|i| self.store.read_piece(i).unwrap().to_vec())
             .collect();
@@ -71,9 +68,16 @@ impl Seeder {
             let bitfield = bitfield.clone();
 
             tokio::spawn(async move {
-                if let Err(e) =
-                    handle_peer(stream, info_hash, peer_id, piece_count, bitfield, pieces, tree)
-                        .await
+                if let Err(e) = handle_peer(
+                    stream,
+                    info_hash,
+                    peer_id,
+                    piece_count,
+                    bitfield,
+                    pieces,
+                    tree,
+                )
+                .await
                 {
                     eprintln!("Peer {addr} error: {e}");
                 }

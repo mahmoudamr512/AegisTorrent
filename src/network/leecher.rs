@@ -25,14 +25,21 @@ impl Leecher {
         }
     }
 
-    pub async fn download(&self, peer_addr: &str) -> Result<DownloadResult, Box<dyn std::error::Error>> {
+    pub async fn download(
+        &self,
+        peer_addr: &str,
+    ) -> Result<DownloadResult, Box<dyn std::error::Error>> {
         let stream = TcpStream::connect(peer_addr).await?;
         let mut conn = PeerConnection::new(stream);
         conn.handshake(self.info_hash, self.our_peer_id).await?;
 
         let bitfield = match conn.recv().await? {
             Message::Bitfield(bf) => bf,
-            other => return Err(format!("expected Bitfield, got type {:#x}", other.message_type()).into()),
+            other => {
+                return Err(
+                    format!("expected Bitfield, got type {:#x}", other.message_type()).into(),
+                )
+            }
         };
 
         let piece_count: usize = bitfield.iter().map(|b| b.count_ones() as usize).sum();
@@ -42,7 +49,11 @@ impl Leecher {
 
         match conn.recv().await? {
             Message::Unchoke => {}
-            other => return Err(format!("expected Unchoke, got type {:#x}", other.message_type()).into()),
+            other => {
+                return Err(
+                    format!("expected Unchoke, got type {:#x}", other.message_type()).into(),
+                )
+            }
         }
 
         let mut pieces: Vec<(u32, Vec<u8>)> = Vec::with_capacity(piece_count);
@@ -56,8 +67,14 @@ impl Leecher {
             .await?;
 
             let (index, data, proof) = match conn.recv().await? {
-                Message::Piece { index, data, proof, .. } => (index, data, proof),
-                other => return Err(format!("expected Piece, got type {:#x}", other.message_type()).into()),
+                Message::Piece {
+                    index, data, proof, ..
+                } => (index, data, proof),
+                other => {
+                    return Err(
+                        format!("expected Piece, got type {:#x}", other.message_type()).into(),
+                    )
+                }
             };
 
             let mut hasher = Sha256::new();

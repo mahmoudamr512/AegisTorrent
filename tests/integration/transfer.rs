@@ -1,8 +1,8 @@
-use tokio::net::TcpListener;
 use tempfile::TempDir;
+use tokio::net::TcpListener;
 
-use aegistorrent::network::seeder::Seeder;
 use aegistorrent::network::leecher::Leecher;
+use aegistorrent::network::seeder::Seeder;
 
 #[tokio::test]
 async fn two_peer_file_transfer() {
@@ -31,7 +31,11 @@ async fn two_peer_file_transfer() {
 
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-    let leecher = Leecher::new(info_hash, leecher_id, output_path.to_str().unwrap().to_string());
+    let leecher = Leecher::new(
+        info_hash,
+        leecher_id,
+        output_path.to_str().unwrap().to_string(),
+    );
     let result = leecher.download(&addr).await.unwrap();
 
     let downloaded = std::fs::read(&output_path).unwrap();
