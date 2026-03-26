@@ -6,42 +6,29 @@ on:
   pull_request:
     branches: [main]
 
-jobs:
-  build-and-test:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        node-version: [20.x, 22.x]
+env:
+  CARGO_TERM_COLOR: always
 
+jobs:
+  check:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Use Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v4
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          node-version: ${{ matrix.node-version }}
-          cache: 'npm'
+          components: rustfmt, clippy
 
-      - name: Install dependencies
-        run: npm ci
+      - uses: Swatinem/rust-cache@v2
 
-      - name: Type check
-        run: npm run typecheck
+      - name: Format
+        run: cargo fmt --all -- --check
 
-      - name: Lint
-        run: npm run lint
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
 
       - name: Build
-        run: npm run build
+        run: cargo build --all-targets
 
-      - name: Unit tests
-        run: npm run test:unit
-
-      - name: Integration tests
-        run: npm run test:integration
-
-      - name: Upload coverage
-        uses: codecov/codecov-action@v4
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          fail_ci_if_error: false
+      - name: Test
+        run: cargo test --all-targets

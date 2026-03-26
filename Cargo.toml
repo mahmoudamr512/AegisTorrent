@@ -1,0 +1,25 @@
+[package]
+name = "aegistorrent"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+description = "High-performance P2P file distribution engine"
+license = "MIT"
+repository = "https://github.com/mahmoudamr512/aegistorrent"
+
+[[bin]]
+name = "aegis"
+path = "src/cli/main.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+sha2 = "0.10"
+clap = { version = "4", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
+thiserror = "2"
+bytes = "1"
+
+[dev-dependencies]
+tokio-test = "0.4"
+tempfile = "3"
