@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 use bytes::Bytes;
 use sha2::{Digest, Sha256};
@@ -24,6 +25,25 @@ pub struct DownloadResult {
     pub peers_used: usize,
 }
 
+#[derive(Debug, Clone)]
+pub struct DownloadProgress {
+    pub pieces_done: u32,
+    pub peers_connected: usize,
+    pub bytes_done: u64,
+    pub complete: bool,
+}
+
+impl DownloadProgress {
+    pub fn new() -> Self {
+        Self {
+            pieces_done: 0,
+            peers_connected: 0,
+            bytes_done: 0,
+            complete: false,
+        }
+    }
+}
+
 impl DownloadCoordinator {
     pub fn new(
         info_hash: [u8; 32],
@@ -43,7 +63,20 @@ impl DownloadCoordinator {
         }
     }
 
-    pub async fn run(self) -> Result<DownloadResult, Box<dyn std::error::Error>> {
+    pub async fn run(
+        self,
+        progress: Option<Arc<Mutex<DownloadProgress>>>,
+    ) -> Result<DownloadResult, Box<dyn std::error::Error>> {
+        let update_progress =
+            |progress: &Option<Arc<Mutex<DownloadProgress>>>,
+             f: &dyn Fn(&mut DownloadProgress)| {
+                if let Some(p) = progress {
+                    if let Ok(mut guard) = p.lock() {
+                        f(&mut guard);
+                    }
+                }
+            };
+
         let (event_tx, mut event_rx) = mpsc::channel::<PoolEvent>(128);
         let (cmd_tx, cmd_rx) = mpsc::channel::<PoolCommand>(128);
 
@@ -91,6 +124,7 @@ impl DownloadCoordinator {
             match event {
                 PoolEvent::PeerConnected { peer_id } => {
                     peers_used.insert(peer_id);
+                    update_progress(&progress, &|p| p.peers_connected += 1);
                 }
                 PoolEvent::BitfieldReceived { peer_id, bitfield } => {
                     let bf = parse_bitfield_bytes(&bitfield, piece_count);
@@ -131,12 +165,10 @@ impl DownloadCoordinator {
                             .write_piece(index, self.piece_size, data.to_vec())
                             .await;
                         let _ = cmd_tx.send(PoolCommand::SendHave { index }).await;
-                        println!(
-                            "Piece {}/{piece_count} verified (from {:02x}{:02x}..)",
-                            index + 1,
-                            peer_id[0],
-                            peer_id[1],
-                        );
+                        update_progress(&progress, &|p| {
+                            p.pieces_done += 1;
+                            p.bytes_done = p.pieces_done as u64 * self.piece_size as u64;
+                        });
 
                         if scheduler.is_endgame() {
                             for assignment in scheduler.endgame_requests() {
@@ -163,18 +195,20 @@ impl DownloadCoordinator {
                     scheduler.peer_has_piece(&peer_id, index);
                 }
                 PoolEvent::PeerDisconnected { peer_id } => {
+                    update_progress(&progress, &|p| {
+                        p.peers_connected = p.peers_connected.saturating_sub(1);
+                    });
                     scheduler.unregister_peer(&peer_id);
                     unchoked_peers.remove(&peer_id);
-                    println!("Peer {:02x}{:02x}.. disconnected", peer_id[0], peer_id[1]);
                 }
             }
         }
 
+        update_progress(&progress, &|p| p.complete = true);
+
         drop(cmd_tx);
         pool_handle.abort();
         writer.finish().await?;
-
-        println!("Download complete: {}", self.output_path.display());
 
         Ok(DownloadResult {
             bytes_downloaded: self.total_size,

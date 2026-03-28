@@ -126,7 +126,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     std::path::PathBuf::from(&output),
                     peers,
                 );
-                let result = coordinator.run().await?;
+                let result = coordinator.run(None).await?;
                 println!(
                     "Downloaded {} ({} pieces verified, {} peers used)",
                     format_size(result.bytes_downloaded),
