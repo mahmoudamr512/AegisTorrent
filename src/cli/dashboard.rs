@@ -8,58 +8,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Gauge, Paragraph};
 use ratatui::Terminal;
 
-#[derive(Debug, Clone)]
-pub struct DownloadStats {
-    pub piece_count: u32,
-    pub pieces_done: u32,
-    pub peers_connected: usize,
-    pub bytes_total: u64,
-    pub bytes_done: u64,
-    pub started_at: Instant,
-    pub complete: bool,
-}
-
-impl DownloadStats {
-    pub fn new(piece_count: u32, bytes_total: u64) -> Self {
-        Self {
-            piece_count,
-            pieces_done: 0,
-            peers_connected: 0,
-            bytes_total,
-            bytes_done: 0,
-            started_at: Instant::now(),
-            complete: false,
-        }
-    }
-
-    pub fn progress_ratio(&self) -> f64 {
-        if self.piece_count == 0 {
-            return 0.0;
-        }
-        self.pieces_done as f64 / self.piece_count as f64
-    }
-
-    pub fn elapsed_secs(&self) -> f64 {
-        self.started_at.elapsed().as_secs_f64()
-    }
-
-    pub fn speed_bps(&self) -> f64 {
-        let elapsed = self.elapsed_secs();
-        if elapsed < 0.1 {
-            return 0.0;
-        }
-        self.bytes_done as f64 / elapsed
-    }
-
-    pub fn eta_secs(&self) -> Option<f64> {
-        let speed = self.speed_bps();
-        if speed < 1.0 {
-            return None;
-        }
-        let remaining = self.bytes_total.saturating_sub(self.bytes_done);
-        Some(remaining as f64 / speed)
-    }
-}
+use aegistorrent::network::coordinator::DownloadProgress;
 
 pub fn format_bytes(bytes: u64) -> String {
     if bytes >= 1_073_741_824 {
@@ -80,16 +29,20 @@ pub fn format_speed(bps: f64) -> String {
 pub fn format_eta(secs: Option<f64>) -> String {
     match secs {
         None => "∞".to_string(),
-        Some(s) if s < 60.0 => format!("{:.0}s", s),
-        Some(s) if s < 3600.0 => format!("{:.0}m {:.0}s", s / 60.0, s % 60.0),
-        Some(s) => format!("{:.0}h {:.0}m", s / 3600.0, (s % 3600.0) / 60.0),
+        Some(s) if s < 60.0 => format!("{}s", s as u64),
+        Some(s) if s < 3600.0 => format!("{}m {}s", s as u64 / 60, s as u64 % 60),
+        Some(s) => format!("{}h {}m", s as u64 / 3600, (s as u64 % 3600) / 60),
     }
 }
 
-pub async fn run_dashboard(stats: Arc<Mutex<DownloadStats>>) {
-    use crossterm::{
-        execute,
-        terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+pub async fn run_dashboard(
+    progress: Arc<Mutex<DownloadProgress>>,
+    piece_count: u32,
+    bytes_total: u64,
+) {
+    use crossterm::execute;
+    use crossterm::terminal::{
+        disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
     };
     use std::io::stdout;
     use tokio::time::{interval, Duration};
@@ -107,21 +60,45 @@ pub async fn run_dashboard(stats: Arc<Mutex<DownloadStats>>) {
         }
     };
 
+    let started_at = Instant::now();
     let mut tick = interval(Duration::from_millis(125));
 
     loop {
         tick.tick().await;
 
-        let snapshot = {
-            let s = stats.lock().unwrap();
-            s.clone()
+        let snapshot = progress.lock().unwrap().clone();
+        let elapsed = started_at.elapsed().as_secs_f64();
+        let speed = if elapsed > 0.1 {
+            snapshot.bytes_done as f64 / elapsed
+        } else {
+            0.0
+        };
+        let eta = if speed > 1.0 {
+            let remaining = bytes_total.saturating_sub(snapshot.bytes_done);
+            Some(remaining as f64 / speed)
+        } else {
+            None
+        };
+        let ratio = if piece_count > 0 {
+            (snapshot.pieces_done as f64 / piece_count as f64).clamp(0.0, 1.0)
+        } else {
+            0.0
         };
 
-        let complete = snapshot.complete;
+        let _ = terminal.draw(|frame| {
+            render(
+                frame,
+                &snapshot,
+                piece_count,
+                bytes_total,
+                ratio,
+                speed,
+                eta,
+                elapsed,
+            );
+        });
 
-        let _ = terminal.draw(|frame| render(frame, &snapshot));
-
-        if complete {
+        if snapshot.complete {
             break;
         }
     }
@@ -130,7 +107,16 @@ pub async fn run_dashboard(stats: Arc<Mutex<DownloadStats>>) {
     let _ = disable_raw_mode();
 }
 
-fn render(frame: &mut ratatui::Frame, stats: &DownloadStats) {
+fn render(
+    frame: &mut ratatui::Frame,
+    progress: &DownloadProgress,
+    piece_count: u32,
+    bytes_total: u64,
+    ratio: f64,
+    speed: f64,
+    eta: Option<f64>,
+    elapsed: f64,
+) {
     let area = frame.area();
 
     let chunks = Layout::default()
@@ -143,7 +129,7 @@ fn render(frame: &mut ratatui::Frame, stats: &DownloadStats) {
         ])
         .split(area);
 
-    let pct = stats.progress_ratio() * 100.0;
+    let pct = ratio * 100.0;
     let title = Paragraph::new(Line::from(vec![
         Span::styled(
             "AegisTorrent",
@@ -153,8 +139,8 @@ fn render(frame: &mut ratatui::Frame, stats: &DownloadStats) {
         ),
         Span::raw(format!(
             "  ·  {}/{}  ·  {:.1}%",
-            format_bytes(stats.bytes_done),
-            format_bytes(stats.bytes_total),
+            format_bytes(progress.bytes_done),
+            format_bytes(bytes_total),
             pct
         )),
     ]))
@@ -164,21 +150,48 @@ fn render(frame: &mut ratatui::Frame, stats: &DownloadStats) {
     let gauge = Gauge::default()
         .block(Block::default().borders(Borders::ALL).title("Progress"))
         .gauge_style(Style::default().fg(Color::Green))
-        .ratio(stats.progress_ratio().clamp(0.0, 1.0))
+        .ratio(ratio)
         .label(format!(
             "{}/{} pieces",
-            stats.pieces_done, stats.piece_count
+            progress.pieces_done, piece_count
         ));
     frame.render_widget(gauge, chunks[1]);
 
     let stats_text = format!(
         "↓ {}   Peers: {}   ETA: {}   Elapsed: {:.0}s",
-        format_speed(stats.speed_bps()),
-        stats.peers_connected,
-        format_eta(stats.eta_secs()),
-        stats.elapsed_secs(),
+        format_speed(speed),
+        progress.peers_connected,
+        format_eta(eta),
+        elapsed,
     );
     let stats_widget = Paragraph::new(stats_text)
         .block(Block::default().borders(Borders::ALL).title("Stats"));
     frame.render_widget(stats_widget, chunks[2]);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_bytes_ranges() {
+        assert_eq!(format_bytes(512), "512 B");
+        assert_eq!(format_bytes(2048), "2.00 KB");
+        assert_eq!(format_bytes(2 * 1_048_576), "2.00 MB");
+        assert_eq!(format_bytes(3 * 1_073_741_824), "3.00 GB");
+    }
+
+    #[test]
+    fn format_eta_ranges() {
+        assert_eq!(format_eta(None), "∞");
+        assert_eq!(format_eta(Some(30.0)), "30s");
+        assert_eq!(format_eta(Some(90.0)), "1m 30s");
+        assert_eq!(format_eta(Some(3660.0)), "1h 1m");
+    }
+
+    #[test]
+    fn format_speed_display() {
+        assert_eq!(format_speed(1024.0), "1.00 KB/s");
+        assert_eq!(format_speed(5.0 * 1_048_576.0), "5.00 MB/s");
+    }
 }

@@ -66,7 +66,7 @@ impl DownloadCoordinator {
     pub async fn run(
         self,
         progress: Option<Arc<Mutex<DownloadProgress>>>,
-    ) -> Result<DownloadResult, Box<dyn std::error::Error>> {
+    ) -> Result<DownloadResult, Box<dyn std::error::Error + Send + Sync>> {
         let update_progress =
             |progress: &Option<Arc<Mutex<DownloadProgress>>>,
              f: &dyn Fn(&mut DownloadProgress)| {

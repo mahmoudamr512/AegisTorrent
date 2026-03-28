@@ -90,7 +90,7 @@ async fn multi_peer_download() {
         vec![addr1, addr2],
     );
 
-    let result = coordinator.run().await.unwrap();
+    let result = coordinator.run(None).await.unwrap();
 
     let downloaded = std::fs::read(&output_path).unwrap();
     assert_eq!(downloaded.len(), data.len());
