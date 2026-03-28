@@ -33,6 +33,12 @@ pub struct DownloadProgress {
     pub complete: bool,
 }
 
+impl Default for DownloadProgress {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DownloadProgress {
     pub fn new() -> Self {
         Self {
@@ -67,15 +73,14 @@ impl DownloadCoordinator {
         self,
         progress: Option<Arc<Mutex<DownloadProgress>>>,
     ) -> Result<DownloadResult, Box<dyn std::error::Error + Send + Sync>> {
-        let update_progress =
-            |progress: &Option<Arc<Mutex<DownloadProgress>>>,
-             f: &dyn Fn(&mut DownloadProgress)| {
-                if let Some(p) = progress {
-                    if let Ok(mut guard) = p.lock() {
-                        f(&mut guard);
-                    }
+        let update_progress = |progress: &Option<Arc<Mutex<DownloadProgress>>>,
+                               f: &dyn Fn(&mut DownloadProgress)| {
+            if let Some(p) = progress {
+                if let Ok(mut guard) = p.lock() {
+                    f(&mut guard);
                 }
-            };
+            }
+        };
 
         let (event_tx, mut event_rx) = mpsc::channel::<PoolEvent>(128);
         let (cmd_tx, cmd_rx) = mpsc::channel::<PoolCommand>(128);

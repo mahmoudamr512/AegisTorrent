@@ -85,18 +85,16 @@ pub async fn run_dashboard(
             0.0
         };
 
-        let _ = terminal.draw(|frame| {
-            render(
-                frame,
-                &snapshot,
-                piece_count,
-                bytes_total,
-                ratio,
-                speed,
-                eta,
-                elapsed,
-            );
-        });
+        let view = DashboardView {
+            progress: &snapshot,
+            piece_count,
+            bytes_total,
+            ratio,
+            speed,
+            eta,
+            elapsed,
+        };
+        let _ = terminal.draw(|frame| render(frame, &view));
 
         if snapshot.complete {
             break;
@@ -107,16 +105,17 @@ pub async fn run_dashboard(
     let _ = disable_raw_mode();
 }
 
-fn render(
-    frame: &mut ratatui::Frame,
-    progress: &DownloadProgress,
+struct DashboardView<'a> {
+    progress: &'a DownloadProgress,
     piece_count: u32,
     bytes_total: u64,
     ratio: f64,
     speed: f64,
     eta: Option<f64>,
     elapsed: f64,
-) {
+}
+
+fn render(frame: &mut ratatui::Frame, view: &DashboardView) {
     let area = frame.area();
 
     let chunks = Layout::default()
@@ -129,7 +128,7 @@ fn render(
         ])
         .split(area);
 
-    let pct = ratio * 100.0;
+    let pct = view.ratio * 100.0;
     let title = Paragraph::new(Line::from(vec![
         Span::styled(
             "AegisTorrent",
@@ -139,8 +138,8 @@ fn render(
         ),
         Span::raw(format!(
             "  ·  {}/{}  ·  {:.1}%",
-            format_bytes(progress.bytes_done),
-            format_bytes(bytes_total),
+            format_bytes(view.progress.bytes_done),
+            format_bytes(view.bytes_total),
             pct
         )),
     ]))
@@ -150,22 +149,22 @@ fn render(
     let gauge = Gauge::default()
         .block(Block::default().borders(Borders::ALL).title("Progress"))
         .gauge_style(Style::default().fg(Color::Green))
-        .ratio(ratio)
+        .ratio(view.ratio)
         .label(format!(
             "{}/{} pieces",
-            progress.pieces_done, piece_count
+            view.progress.pieces_done, view.piece_count
         ));
     frame.render_widget(gauge, chunks[1]);
 
     let stats_text = format!(
         "↓ {}   Peers: {}   ETA: {}   Elapsed: {:.0}s",
-        format_speed(speed),
-        progress.peers_connected,
-        format_eta(eta),
-        elapsed,
+        format_speed(view.speed),
+        view.progress.peers_connected,
+        format_eta(view.eta),
+        view.elapsed,
     );
-    let stats_widget = Paragraph::new(stats_text)
-        .block(Block::default().borders(Borders::ALL).title("Stats"));
+    let stats_widget =
+        Paragraph::new(stats_text).block(Block::default().borders(Borders::ALL).title("Stats"));
     frame.render_widget(stats_widget, chunks[2]);
 }
 

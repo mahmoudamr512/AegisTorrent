@@ -135,9 +135,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 );
 
                 let progress_for_download = Arc::clone(&progress);
-                let download_handle = tokio::spawn(async move {
-                    coordinator.run(Some(progress_for_download)).await
-                });
+                let download_handle =
+                    tokio::spawn(async move { coordinator.run(Some(progress_for_download)).await });
 
                 dashboard::run_dashboard(progress, piece_count, total_size).await;
 
