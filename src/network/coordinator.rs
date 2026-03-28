@@ -47,7 +47,8 @@ impl DownloadCoordinator {
         let (event_tx, mut event_rx) = mpsc::channel::<PoolEvent>(128);
         let (cmd_tx, cmd_rx) = mpsc::channel::<PoolCommand>(128);
 
-        let bitfield_bytes = vec![0u8; (self.total_size as usize).div_ceil(self.piece_size).div_ceil(8)];
+        let bitfield_bytes =
+            vec![0u8; (self.total_size as usize).div_ceil(self.piece_size).div_ceil(8)];
         let our_bitfield = Bytes::from(bitfield_bytes);
 
         let mut pool = ConnectionPool::new(
@@ -75,6 +76,7 @@ impl DownloadCoordinator {
         let mut pieces_verified = 0u32;
         let mut peers_used = std::collections::HashSet::new();
         let mut unchoked_peers = std::collections::HashSet::<PeerId>::new();
+        let mut completed_pieces = std::collections::HashSet::<u32>::new();
 
         while !scheduler.is_complete() {
             let event = match event_rx.recv().await {
@@ -89,7 +91,9 @@ impl DownloadCoordinator {
                 PoolEvent::BitfieldReceived { peer_id, bitfield } => {
                     let bf = parse_bitfield_bytes(&bitfield, piece_count);
                     scheduler.register_peer(peer_id, &bf);
-                    let _ = cmd_tx.send(PoolCommand::SendInterested { peer_id }).await;
+                    let _ = cmd_tx
+                        .send(PoolCommand::SendInterested { peer_id })
+                        .await;
                 }
                 PoolEvent::Unchoked { peer_id } => {
                     unchoked_peers.insert(peer_id);
@@ -104,6 +108,10 @@ impl DownloadCoordinator {
                     data,
                     proof,
                 } => {
+                    if completed_pieces.contains(&index) {
+                        continue;
+                    }
+
                     let mut hasher = Sha256::new();
                     hasher.update(&data);
                     let leaf_hash: [u8; 32] = hasher.finalize().into();
@@ -115,6 +123,7 @@ impl DownloadCoordinator {
 
                     if MerkleTree::verify(&self.info_hash, &leaf_hash, &merkle_proof) {
                         pieces_verified += 1;
+                        completed_pieces.insert(index);
                         scheduler.piece_completed(index);
                         let _ = writer
                             .write_piece(index, self.piece_size, data.to_vec())
@@ -180,7 +189,7 @@ impl DownloadCoordinator {
         cmd_tx: &mpsc::Sender<PoolCommand>,
         peer_id: &PeerId,
     ) {
-        while let Some(assignment) = scheduler.pick_piece(peer_id) {
+        if let Some(assignment) = scheduler.pick_piece(peer_id) {
             let _ = cmd_tx
                 .send(PoolCommand::RequestPiece {
                     peer_id: assignment.peer,
