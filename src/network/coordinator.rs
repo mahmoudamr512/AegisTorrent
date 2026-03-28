@@ -47,8 +47,12 @@ impl DownloadCoordinator {
         let (event_tx, mut event_rx) = mpsc::channel::<PoolEvent>(128);
         let (cmd_tx, cmd_rx) = mpsc::channel::<PoolCommand>(128);
 
-        let bitfield_bytes =
-            vec![0u8; (self.total_size as usize).div_ceil(self.piece_size).div_ceil(8)];
+        let bitfield_bytes = vec![
+            0u8;
+            (self.total_size as usize)
+                .div_ceil(self.piece_size)
+                .div_ceil(8)
+        ];
         let our_bitfield = Bytes::from(bitfield_bytes);
 
         let mut pool = ConnectionPool::new(
@@ -91,9 +95,7 @@ impl DownloadCoordinator {
                 PoolEvent::BitfieldReceived { peer_id, bitfield } => {
                     let bf = parse_bitfield_bytes(&bitfield, piece_count);
                     scheduler.register_peer(peer_id, &bf);
-                    let _ = cmd_tx
-                        .send(PoolCommand::SendInterested { peer_id })
-                        .await;
+                    let _ = cmd_tx.send(PoolCommand::SendInterested { peer_id }).await;
                 }
                 PoolEvent::Unchoked { peer_id } => {
                     unchoked_peers.insert(peer_id);
@@ -163,10 +165,7 @@ impl DownloadCoordinator {
                 PoolEvent::PeerDisconnected { peer_id } => {
                     scheduler.unregister_peer(&peer_id);
                     unchoked_peers.remove(&peer_id);
-                    println!(
-                        "Peer {:02x}{:02x}.. disconnected",
-                        peer_id[0], peer_id[1]
-                    );
+                    println!("Peer {:02x}{:02x}.. disconnected", peer_id[0], peer_id[1]);
                 }
             }
         }

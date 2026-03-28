@@ -17,6 +17,12 @@ pub struct ChokingDecision {
     pub to_choke: Vec<PeerId>,
 }
 
+impl Default for ChokingManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ChokingManager {
     pub fn new() -> Self {
         Self {

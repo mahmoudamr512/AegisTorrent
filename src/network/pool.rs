@@ -38,26 +38,12 @@ pub enum PoolEvent {
 
 #[derive(Debug)]
 pub enum PoolCommand {
-    RequestPiece {
-        peer_id: PeerId,
-        index: u32,
-    },
-    CancelPiece {
-        peer_id: PeerId,
-        index: u32,
-    },
-    SendHave {
-        index: u32,
-    },
-    ChokePeer {
-        peer_id: PeerId,
-    },
-    UnchokePeer {
-        peer_id: PeerId,
-    },
-    SendInterested {
-        peer_id: PeerId,
-    },
+    RequestPiece { peer_id: PeerId, index: u32 },
+    CancelPiece { peer_id: PeerId, index: u32 },
+    SendHave { index: u32 },
+    ChokePeer { peer_id: PeerId },
+    UnchokePeer { peer_id: PeerId },
+    SendInterested { peer_id: PeerId },
 }
 
 pub struct ConnectionPool {
@@ -71,7 +57,6 @@ pub struct ConnectionPool {
 
 enum PeerCommand {
     Send(Message),
-    Shutdown,
 }
 
 impl ConnectionPool {
@@ -219,7 +204,7 @@ impl ConnectionPool {
                                 return;
                             }
                         }
-                        Some(PeerCommand::Shutdown) | None => return,
+                        None => return,
                     }
                 }
             }
