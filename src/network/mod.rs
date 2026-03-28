@@ -1,3 +1,4 @@
+pub mod coordinator;
 pub mod discovery;
 pub mod leecher;
 pub mod peer;

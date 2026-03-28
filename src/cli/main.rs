@@ -17,9 +17,13 @@ enum Cli {
     Download {
         hash: String,
         #[arg(short, long)]
-        peer: String,
+        peer: Vec<String>,
         #[arg(short, long)]
         output: String,
+        #[arg(long, default_value = "262144")]
+        piece_size: usize,
+        #[arg(long, default_value = "0")]
+        total_size: u64,
     },
 }
 
@@ -85,18 +89,49 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             seeder.listen(&listen).await?;
         }
-        Cli::Download { hash, peer, output } => {
+        Cli::Download {
+            hash,
+            peer: peers,
+            output,
+            piece_size,
+            total_size,
+        } => {
             let info_hash = parse_hex_hash(&hash)?;
             let peer_id = generate_peer_id();
-            let leecher = Leecher::new(info_hash, peer_id, output);
 
-            println!("Connecting to {peer}...");
-            let result = leecher.download(&peer).await?;
-            println!(
-                "Downloaded {} ({} pieces verified)",
-                format_size(result.bytes_downloaded),
-                result.pieces_verified,
-            );
+            if peers.is_empty() {
+                eprintln!("Error: at least one --peer is required");
+                std::process::exit(1);
+            }
+
+            if total_size == 0 {
+                let leecher = Leecher::new(info_hash, peer_id, output);
+                println!("Connecting to {}...", peers[0]);
+                let result = leecher.download(&peers[0]).await?;
+                println!(
+                    "Downloaded {} ({} pieces verified)",
+                    format_size(result.bytes_downloaded),
+                    result.pieces_verified,
+                );
+            } else {
+                use aegistorrent::network::coordinator::DownloadCoordinator;
+                println!("Connecting to {} peer(s)...", peers.len());
+                let coordinator = DownloadCoordinator::new(
+                    info_hash,
+                    peer_id,
+                    piece_size,
+                    total_size,
+                    std::path::PathBuf::from(&output),
+                    peers,
+                );
+                let result = coordinator.run().await?;
+                println!(
+                    "Downloaded {} ({} pieces verified, {} peers used)",
+                    format_size(result.bytes_downloaded),
+                    result.pieces_verified,
+                    result.peers_used,
+                );
+            }
         }
     }
 
