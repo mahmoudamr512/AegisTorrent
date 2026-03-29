@@ -35,17 +35,18 @@ pub fn format_eta(secs: Option<f64>) -> String {
     }
 }
 
-pub async fn run_dashboard(
-    progress: Arc<Mutex<DownloadProgress>>,
-    piece_count: u32,
-    bytes_total: u64,
-) {
+pub async fn run_dashboard(progress: Arc<Mutex<DownloadProgress>>) {
     use crossterm::execute;
     use crossterm::terminal::{
         disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
     };
     use std::io::stdout;
     use tokio::time::{interval, Duration};
+
+    let (piece_count, bytes_total) = {
+        let p = progress.lock().unwrap();
+        (p.piece_count, p.bytes_total)
+    };
 
     let _ = enable_raw_mode();
     let mut out = stdout();
@@ -115,16 +116,24 @@ struct DashboardView<'a> {
     elapsed: f64,
 }
 
+fn render_speed_bar(ratio: f64) -> String {
+    let filled = (ratio * 10.0).round() as usize;
+    let empty = 10 - filled.min(10);
+    format!("{}{}", "█".repeat(filled.min(10)), "░".repeat(empty))
+}
+
 fn render(frame: &mut ratatui::Frame, view: &DashboardView) {
     let area = frame.area();
 
+    let peer_rows = view.progress.peer_stats.len().max(1) as u16 + 2;
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3),
             Constraint::Length(3),
             Constraint::Length(3),
-            Constraint::Min(0),
+            Constraint::Min(peer_rows),
+            Constraint::Length(3),
         ])
         .split(area);
 
@@ -166,6 +175,62 @@ fn render(frame: &mut ratatui::Frame, view: &DashboardView) {
     let stats_widget =
         Paragraph::new(stats_text).block(Block::default().borders(Borders::ALL).title("Stats"));
     frame.render_widget(stats_widget, chunks[2]);
+
+    let peer_lines: Vec<Line> = view
+        .progress
+        .peer_stats
+        .iter()
+        .map(|p| {
+            let id_short = if p.id.len() >= 4 { &p.id[..4] } else { &p.id };
+            let (bar, speed_text) = if p.score <= 0.0 {
+                (render_speed_bar(0.0), "BANNED".to_string())
+            } else {
+                let max_speed = view
+                    .progress
+                    .peer_stats
+                    .iter()
+                    .map(|s| s.speed_bps)
+                    .fold(0.0_f64, f64::max);
+                let ratio = if max_speed > 0.0 {
+                    p.speed_bps / max_speed
+                } else {
+                    0.0
+                };
+                (render_speed_bar(ratio), format_speed(p.speed_bps))
+            };
+            let strike_str = if p.strikes > 0 {
+                if p.score <= 0.0 {
+                    format!(" ✗{}", p.strikes)
+                } else {
+                    format!(" ⚠{}", p.strikes)
+                }
+            } else {
+                String::new()
+            };
+            Line::from(format!(
+                "  {}  {}  {}  score:{:.2}  [{}]{}",
+                id_short, bar, speed_text, p.score, p.pipeline, strike_str
+            ))
+        })
+        .collect();
+    let peers_widget =
+        Paragraph::new(peer_lines).block(Block::default().borders(Borders::ALL).title("Peers"));
+    frame.render_widget(peers_widget, chunks[3]);
+
+    let heatmap: String = view
+        .progress
+        .piece_rarity
+        .iter()
+        .map(|&r| match r {
+            0 => "[!!]",
+            1 => "[░░]",
+            2 => "[▓▓]",
+            _ => "[██]",
+        })
+        .collect();
+    let rarity_widget = Paragraph::new(heatmap)
+        .block(Block::default().borders(Borders::ALL).title("Rarity"));
+    frame.render_widget(rarity_widget, chunks[4]);
 }
 
 #[cfg(test)]
