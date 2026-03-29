@@ -2,3 +2,5 @@
 **/*.rs.bk
 *.pdb
 .worktrees/
+testfile.bin
+.claude/
