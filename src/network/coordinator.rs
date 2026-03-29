@@ -227,13 +227,19 @@ impl DownloadCoordinator {
         cmd_tx: &mpsc::Sender<PoolCommand>,
         peer_id: &PeerId,
     ) {
-        if let Some(assignment) = scheduler.pick_piece(peer_id) {
-            let _ = cmd_tx
-                .send(PoolCommand::RequestPiece {
-                    peer_id: assignment.peer,
-                    index: assignment.piece_index,
-                })
-                .await;
+        let max_pending = if scheduler.is_endgame() { 1 } else { 5 };
+        for _ in 0..max_pending {
+            match scheduler.pick_piece(peer_id) {
+                Some(assignment) => {
+                    let _ = cmd_tx
+                        .send(PoolCommand::RequestPiece {
+                            peer_id: assignment.peer,
+                            index: assignment.piece_index,
+                        })
+                        .await;
+                }
+                None => break,
+            }
         }
     }
 }
