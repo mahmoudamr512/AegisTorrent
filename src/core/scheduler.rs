@@ -144,6 +144,23 @@ impl Scheduler {
         self.in_flight.get(&index)
     }
 
+    pub fn peers_with_piece(&self, index: u32) -> Vec<PeerId> {
+        self.peer_bitfields
+            .iter()
+            .filter_map(|(peer, bf)| {
+                if bf.get(index as usize).copied().unwrap_or(false) {
+                    Some(*peer)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    pub fn piece_rarity(&self, index: u32) -> u32 {
+        self.piece_rarity.get(index as usize).copied().unwrap_or(0)
+    }
+
     fn check_endgame(&mut self) {
         if self.endgame {
             return;

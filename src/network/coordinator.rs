@@ -1,13 +1,18 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use bytes::Bytes;
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 use tokio::sync::mpsc;
 
 use crate::core::merkle::{MerkleProof, MerkleTree};
 use crate::core::scheduler::{parse_bitfield_bytes, PeerId, Scheduler};
+use crate::core::swarm::SwarmIntel;
 use crate::network::pool::{ConnectionPool, PoolCommand, PoolEvent};
+use crate::security::reputation::{FailureKind, ReputationManager};
 use crate::storage::writer::DiskWriter;
 
 pub struct DownloadCoordinator {
@@ -25,27 +30,38 @@ pub struct DownloadResult {
     pub peers_used: usize,
 }
 
-#[derive(Debug, Clone)]
-pub struct DownloadProgress {
-    pub pieces_done: u32,
-    pub peers_connected: usize,
-    pub bytes_done: u64,
-    pub complete: bool,
+#[derive(Debug, Clone, Serialize)]
+pub struct PeerStats {
+    pub id: String,
+    pub speed_bps: f64,
+    pub score: f64,
+    pub strikes: u8,
+    pub pipeline: usize,
 }
 
-impl Default for DownloadProgress {
-    fn default() -> Self {
-        Self::new()
-    }
+#[derive(Debug, Clone, Serialize)]
+pub struct DownloadProgress {
+    pub pieces_done: u32,
+    pub piece_count: u32,
+    pub peers_connected: usize,
+    pub bytes_done: u64,
+    pub bytes_total: u64,
+    pub complete: bool,
+    pub peer_stats: Vec<PeerStats>,
+    pub piece_rarity: Vec<u32>,
 }
 
 impl DownloadProgress {
-    pub fn new() -> Self {
+    pub fn new(piece_count: u32, bytes_total: u64) -> Self {
         Self {
             pieces_done: 0,
+            piece_count,
             peers_connected: 0,
             bytes_done: 0,
+            bytes_total,
             complete: false,
+            peer_stats: Vec::new(),
+            piece_rarity: vec![0; piece_count as usize],
         }
     }
 }
@@ -120,10 +136,39 @@ impl DownloadCoordinator {
         let mut unchoked_peers = std::collections::HashSet::<PeerId>::new();
         let mut completed_pieces = std::collections::HashSet::<u32>::new();
 
+        let mut reputation = ReputationManager::new();
+        let mut swarm = SwarmIntel::new();
+        let mut request_timestamps: HashMap<u32, (PeerId, Instant)> = HashMap::new();
+
+        let mut stale_check = tokio::time::interval(tokio::time::Duration::from_millis(500));
+
         while !scheduler.is_complete() {
-            let event = match event_rx.recv().await {
-                Some(e) => e,
-                None => break,
+            let event = tokio::select! {
+                ev = event_rx.recv() => {
+                    match ev {
+                        Some(e) => e,
+                        None => break,
+                    }
+                }
+                _ = stale_check.tick() => {
+                    let stale = swarm.stale_requests(&request_timestamps);
+                    for piece in stale {
+                        if let Some((old_peer, _)) = request_timestamps.remove(&piece) {
+                            let peers_with_piece: Vec<PeerId> = scheduler
+                                .peers_with_piece(piece)
+                                .into_iter()
+                                .filter(|p| *p != old_peer && unchoked_peers.contains(p) && !reputation.is_banned(p))
+                                .collect();
+                            if let Some(best) = swarm.pick_best_peer(&peers_with_piece, &reputation) {
+                                let _ = cmd_tx
+                                    .send(PoolCommand::RequestPiece { peer_id: best, index: piece })
+                                    .await;
+                                request_timestamps.insert(piece, (best, Instant::now()));
+                            }
+                        }
+                    }
+                    continue;
+                }
             };
 
             match event {
@@ -138,7 +183,15 @@ impl DownloadCoordinator {
                 }
                 PoolEvent::Unchoked { peer_id } => {
                     unchoked_peers.insert(peer_id);
-                    Self::request_pieces(&mut scheduler, &cmd_tx, &peer_id).await;
+                    request_pieces(
+                        &mut scheduler,
+                        &cmd_tx,
+                        &peer_id,
+                        &swarm,
+                        &reputation,
+                        &mut request_timestamps,
+                    )
+                    .await;
                 }
                 PoolEvent::Choked { peer_id } => {
                     unchoked_peers.remove(&peer_id);
@@ -166,6 +219,17 @@ impl DownloadCoordinator {
                         pieces_verified += 1;
                         completed_pieces.insert(index);
                         scheduler.piece_completed(index);
+
+                        if let Some((req_peer, sent_at)) = request_timestamps.remove(&index) {
+                            let duration = sent_at.elapsed();
+                            reputation.record_success(
+                                req_peer,
+                                data.len() as u64,
+                                duration.as_millis() as u64,
+                            );
+                            swarm.record_response(req_peer, duration.as_millis() as u64);
+                        }
+
                         let _ = writer
                             .write_piece(index, self.piece_size, data.to_vec())
                             .await;
@@ -190,10 +254,24 @@ impl DownloadCoordinator {
                     } else {
                         eprintln!("Piece {index} failed verification from peer");
                         scheduler.piece_failed(index);
+                        request_timestamps.remove(&index);
+                        reputation.record_failure(peer_id, FailureKind::BadHash);
+                        if reputation.is_banned(&peer_id) {
+                            let _ = cmd_tx.send(PoolCommand::DisconnectPeer { peer_id }).await;
+                            unchoked_peers.remove(&peer_id);
+                        }
                     }
 
                     if unchoked_peers.contains(&peer_id) {
-                        Self::request_pieces(&mut scheduler, &cmd_tx, &peer_id).await;
+                        request_pieces(
+                            &mut scheduler,
+                            &cmd_tx,
+                            &peer_id,
+                            &swarm,
+                            &reputation,
+                            &mut request_timestamps,
+                        )
+                        .await;
                     }
                 }
                 PoolEvent::HaveReceived { peer_id, index } => {
@@ -205,8 +283,30 @@ impl DownloadCoordinator {
                     });
                     scheduler.unregister_peer(&peer_id);
                     unchoked_peers.remove(&peer_id);
+                    reputation.remove_peer(&peer_id);
+                    swarm.remove_peer(&peer_id);
+                    request_timestamps.retain(|_, (p, _)| *p != peer_id);
                 }
             }
+
+            // Update peer stats and rarity after each event
+            let peer_stats: Vec<PeerStats> = unchoked_peers
+                .iter()
+                .map(|pid| PeerStats {
+                    id: format!("{:02x}{:02x}", pid[0], pid[1]),
+                    speed_bps: reputation.peer_speed_bps(pid),
+                    score: reputation.score(pid),
+                    strikes: reputation.strike_level(pid),
+                    pipeline: swarm.pipeline_depth(pid, &reputation),
+                })
+                .collect();
+            let rarity: Vec<u32> = (0..piece_count)
+                .map(|i| scheduler.piece_rarity(i))
+                .collect();
+            update_progress(&progress, &|p| {
+                p.peer_stats = peer_stats.clone();
+                p.piece_rarity = rarity.clone();
+            });
         }
 
         update_progress(&progress, &|p| p.complete = true);
@@ -221,25 +321,34 @@ impl DownloadCoordinator {
             peers_used: peers_used.len(),
         })
     }
+}
 
-    async fn request_pieces(
-        scheduler: &mut Scheduler,
-        cmd_tx: &mpsc::Sender<PoolCommand>,
-        peer_id: &PeerId,
-    ) {
-        let max_pending = if scheduler.is_endgame() { 1 } else { 5 };
-        for _ in 0..max_pending {
-            match scheduler.pick_piece(peer_id) {
-                Some(assignment) => {
-                    let _ = cmd_tx
-                        .send(PoolCommand::RequestPiece {
-                            peer_id: assignment.peer,
-                            index: assignment.piece_index,
-                        })
-                        .await;
-                }
-                None => break,
+async fn request_pieces(
+    scheduler: &mut Scheduler,
+    cmd_tx: &mpsc::Sender<PoolCommand>,
+    peer_id: &PeerId,
+    swarm: &SwarmIntel,
+    reputation: &ReputationManager,
+    request_timestamps: &mut HashMap<u32, (PeerId, Instant)>,
+) {
+    if reputation.is_banned(peer_id) {
+        return;
+    }
+    let depth = swarm.pipeline_depth(peer_id, reputation);
+    let max = if scheduler.is_endgame() { 1 } else { depth };
+    for _ in 0..max {
+        match scheduler.pick_piece(peer_id) {
+            Some(assignment) => {
+                let _ = cmd_tx
+                    .send(PoolCommand::RequestPiece {
+                        peer_id: assignment.peer,
+                        index: assignment.piece_index,
+                    })
+                    .await;
+                request_timestamps
+                    .insert(assignment.piece_index, (assignment.peer, Instant::now()));
             }
+            None => break,
         }
     }
 }
