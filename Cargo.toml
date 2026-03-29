@@ -22,6 +22,8 @@ bytes = "1"
 tokio-util = { version = "0.7", features = ["codec"] }
 futures-util = { version = "0.3", default-features = false, features = ["sink"] }
 rand = "0.8"
+ratatui = "0.29"
+crossterm = "0.28"
 
 [dev-dependencies]
 tokio-test = "0.4"

@@ -1,3 +1,5 @@
+mod dashboard;
+
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -114,8 +116,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     result.pieces_verified,
                 );
             } else {
-                use aegistorrent::network::coordinator::DownloadCoordinator;
+                use std::sync::{Arc, Mutex};
+
+                use aegistorrent::network::coordinator::{DownloadCoordinator, DownloadProgress};
+
+                let piece_count = (total_size as usize).div_ceil(piece_size) as u32;
+                let progress = Arc::new(Mutex::new(DownloadProgress::new()));
+
                 println!("Connecting to {} peer(s)...", peers.len());
+
                 let coordinator = DownloadCoordinator::new(
                     info_hash,
                     peer_id,
@@ -124,9 +133,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     std::path::PathBuf::from(&output),
                     peers,
                 );
-                let result = coordinator.run().await?;
+
+                let progress_for_download = Arc::clone(&progress);
+                let download_handle =
+                    tokio::spawn(async move { coordinator.run(Some(progress_for_download)).await });
+
+                dashboard::run_dashboard(progress, piece_count, total_size).await;
+
+                let result = download_handle
+                    .await?
+                    .map_err(|e| -> Box<dyn std::error::Error> { e })?;
                 println!(
-                    "Downloaded {} ({} pieces verified, {} peers used)",
+                    "\nDownloaded {} ({} pieces verified, {} peers used)",
                     format_size(result.bytes_downloaded),
                     result.pieces_verified,
                     result.peers_used,
