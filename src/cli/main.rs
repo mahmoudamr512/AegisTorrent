@@ -26,6 +26,8 @@ enum Cli {
         piece_size: usize,
         #[arg(long, default_value = "0")]
         total_size: u64,
+        #[arg(long, default_value = "9090")]
+        stats_port: u16,
     },
 }
 
@@ -97,6 +99,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             output,
             piece_size,
             total_size,
+            stats_port,
         } => {
             let info_hash = parse_hex_hash(&hash)?;
             let peer_id = generate_peer_id();
@@ -121,7 +124,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 use aegistorrent::network::coordinator::{DownloadCoordinator, DownloadProgress};
 
                 let piece_count = (total_size as usize).div_ceil(piece_size) as u32;
-                let progress = Arc::new(Mutex::new(DownloadProgress::new()));
+                let progress = Arc::new(Mutex::new(DownloadProgress::new(piece_count, total_size)));
 
                 println!("Connecting to {} peer(s)...", peers.len());
 
@@ -138,7 +141,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let download_handle =
                     tokio::spawn(async move { coordinator.run(Some(progress_for_download)).await });
 
-                dashboard::run_dashboard(progress, piece_count, total_size).await;
+                let stats_addr = format!("127.0.0.1:{stats_port}");
+                let stats_progress = Arc::clone(&progress);
+                tokio::spawn(async move {
+                    aegistorrent::observability::stats_server::run_stats_server(
+                        &stats_addr,
+                        stats_progress,
+                    )
+                    .await;
+                });
+
+                dashboard::run_dashboard(progress).await;
 
                 let result = download_handle
                     .await?
