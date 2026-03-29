@@ -44,6 +44,7 @@ pub enum PoolCommand {
     ChokePeer { peer_id: PeerId },
     UnchokePeer { peer_id: PeerId },
     SendInterested { peer_id: PeerId },
+    DisconnectPeer { peer_id: PeerId },
 }
 
 pub struct ConnectionPool {
@@ -140,6 +141,9 @@ impl ConnectionPool {
                 }
                 PoolCommand::SendInterested { peer_id } => {
                     self.send_to_peer(&peer_id, Message::Interested).await;
+                }
+                PoolCommand::DisconnectPeer { peer_id } => {
+                    self.peer_txs.remove(&peer_id);
                 }
             }
         }
