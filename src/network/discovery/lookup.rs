@@ -47,8 +47,7 @@ impl LookupState {
 
     pub fn add_nodes(&mut self, nodes: Vec<NodeInfo>) {
         for node in nodes {
-            if !self.queried.contains(&node.id)
-                && !self.candidates.iter().any(|c| c.id == node.id)
+            if !self.queried.contains(&node.id) && !self.candidates.iter().any(|c| c.id == node.id)
             {
                 self.candidates.push(node);
             }

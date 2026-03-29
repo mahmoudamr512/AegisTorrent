@@ -31,7 +31,11 @@ pub fn distance_bit_length(distance: &NodeId) -> usize {
 pub fn bucket_index(our_id: &NodeId, other_id: &NodeId) -> usize {
     let dist = xor_distance(our_id, other_id);
     let bl = distance_bit_length(&dist);
-    if bl == 0 { 0 } else { bl - 1 }
+    if bl == 0 {
+        0
+    } else {
+        bl - 1
+    }
 }
 
 pub fn node_id_from_peer_id(peer_id: &PeerId) -> NodeId {

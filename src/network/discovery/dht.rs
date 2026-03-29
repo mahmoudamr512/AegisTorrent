@@ -108,16 +108,14 @@ impl DhtNode {
             addr: src.to_string(),
         };
 
-        match self.routing_table.insert(sender_node.clone()) {
-            InsertResult::BucketFull { oldest } => {
-                let ping = DhtMessage::Ping {
-                    sender: self.config.node_id,
-                };
-                if let Ok(addr) = oldest.addr.parse::<SocketAddr>() {
-                    let _ = socket.send_to(&ping.encode(), addr).await;
-                }
+        if let InsertResult::BucketFull { oldest } = self.routing_table.insert(sender_node.clone())
+        {
+            let ping = DhtMessage::Ping {
+                sender: self.config.node_id,
+            };
+            if let Ok(addr) = oldest.addr.parse::<SocketAddr>() {
+                let _ = socket.send_to(&ping.encode(), addr).await;
             }
-            _ => {}
         }
 
         match msg {

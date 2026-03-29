@@ -82,11 +82,8 @@ impl PeerStore {
         match self.store.get(info_hash) {
             None => vec![],
             Some(peers) => {
-                let mut active: Vec<StoredPeer> = peers
-                    .iter()
-                    .filter(|p| !p.is_stale())
-                    .cloned()
-                    .collect();
+                let mut active: Vec<StoredPeer> =
+                    peers.iter().filter(|p| !p.is_stale()).cloned().collect();
                 active.sort_by(|a, b| b.rank().partial_cmp(&a.rank()).unwrap());
                 active.truncate(RETURN_LIMIT);
                 active
@@ -157,7 +154,12 @@ mod tests {
     fn caps_at_return_limit() {
         let mut store = PeerStore::new();
         for i in 0..30u8 {
-            store.announce(hash(1), peer(i), format!("127.0.0.1:{}", 6000 + i as u16), 0.5);
+            store.announce(
+                hash(1),
+                peer(i),
+                format!("127.0.0.1:{}", 6000 + i as u16),
+                0.5,
+            );
         }
         let peers = store.get_peers(&hash(1));
         assert!(peers.len() <= RETURN_LIMIT);

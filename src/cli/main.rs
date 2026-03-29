@@ -196,7 +196,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     })
                     .collect();
 
-                println!("DHT: looking up peers from {} bootstrap node(s)...", bootstrap.len());
+                println!(
+                    "DHT: looking up peers from {} bootstrap node(s)...",
+                    bootstrap.len()
+                );
 
                 let socket = tokio::net::UdpSocket::bind("0.0.0.0:0").await?;
                 DhtNode::find_peers(&socket, node_id, info_hash, initial_nodes, dht_tx.clone())

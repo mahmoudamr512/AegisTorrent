@@ -43,13 +43,29 @@ pub enum PoolEvent {
 
 #[derive(Debug)]
 pub enum PoolCommand {
-    RequestPiece { peer_id: PeerId, index: u32 },
-    CancelPiece { peer_id: PeerId, index: u32 },
-    SendHave { index: u32 },
-    ChokePeer { peer_id: PeerId },
-    UnchokePeer { peer_id: PeerId },
-    SendInterested { peer_id: PeerId },
-    DisconnectPeer { peer_id: PeerId },
+    RequestPiece {
+        peer_id: PeerId,
+        index: u32,
+    },
+    CancelPiece {
+        peer_id: PeerId,
+        index: u32,
+    },
+    SendHave {
+        index: u32,
+    },
+    ChokePeer {
+        peer_id: PeerId,
+    },
+    UnchokePeer {
+        peer_id: PeerId,
+    },
+    SendInterested {
+        peer_id: PeerId,
+    },
+    DisconnectPeer {
+        peer_id: PeerId,
+    },
     SendPex {
         peer_id: PeerId,
         added: Vec<PexPeer>,

@@ -211,9 +211,7 @@ impl DownloadCoordinator {
             match event {
                 PoolEvent::PeerConnected { peer_id } => {
                     peers_used.insert(peer_id);
-                    if !peer_sources.contains_key(&peer_id) {
-                        peer_sources.insert(peer_id, "M".to_string());
-                    }
+                    peer_sources.entry(peer_id).or_insert_with(|| "M".to_string());
                     pex_manager.add_peer(PexPeer {
                         peer_id,
                         addr: String::new(),
@@ -357,7 +355,10 @@ impl DownloadCoordinator {
                     score: reputation.score(pid),
                     strikes: reputation.strike_level(pid),
                     pipeline: swarm.pipeline_depth(pid, &reputation),
-                    source: peer_sources.get(pid).cloned().unwrap_or_else(|| "M".to_string()),
+                    source: peer_sources
+                        .get(pid)
+                        .cloned()
+                        .unwrap_or_else(|| "M".to_string()),
                 })
                 .collect();
             let rarity: Vec<u32> = (0..piece_count)

@@ -40,11 +40,8 @@ impl PexManager {
     }
 
     pub fn generate_pex(&mut self, recipient: &PeerId) -> (Vec<PexPeer>, Vec<PeerId>) {
-        let previously_sent: Vec<PeerId> = self
-            .last_sent
-            .get(recipient)
-            .cloned()
-            .unwrap_or_default();
+        let previously_sent: Vec<PeerId> =
+            self.last_sent.get(recipient).cloned().unwrap_or_default();
 
         let mut added: Vec<PexPeer> = self
             .known_peers

@@ -181,8 +181,8 @@ fn render(frame: &mut ratatui::Frame, view: &DashboardView) {
         "DHT: {} nodes | {} via DHT | {} via PEX",
         view.progress.dht_nodes, view.progress.dht_peers_found, view.progress.pex_peers_found,
     );
-    let dht_widget = Paragraph::new(dht_text)
-        .block(Block::default().borders(Borders::ALL).title("Discovery"));
+    let dht_widget =
+        Paragraph::new(dht_text).block(Block::default().borders(Borders::ALL).title("Discovery"));
     frame.render_widget(dht_widget, chunks[3]);
 
     let peer_lines: Vec<Line> = view
