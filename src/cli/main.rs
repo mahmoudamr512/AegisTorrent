@@ -121,7 +121,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 use aegistorrent::network::coordinator::{DownloadCoordinator, DownloadProgress};
 
                 let piece_count = (total_size as usize).div_ceil(piece_size) as u32;
-                let progress = Arc::new(Mutex::new(DownloadProgress::new()));
+                let progress = Arc::new(Mutex::new(DownloadProgress::new(piece_count, total_size)));
 
                 println!("Connecting to {} peer(s)...", peers.len());
 
