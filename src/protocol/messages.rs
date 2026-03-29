@@ -2,6 +2,13 @@ use bytes::Bytes;
 use thiserror::Error;
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct PexPeer {
+    pub peer_id: [u8; 20],
+    pub addr: String,
+    pub score: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum Message {
     Handshake {
         version: u8,
@@ -30,6 +37,10 @@ pub enum Message {
     Unchoke,
     Interested,
     NotInterested,
+    Pex {
+        added: Vec<PexPeer>,
+        dropped: Vec<[u8; 20]>,
+    },
 }
 
 #[derive(Debug, Error)]
@@ -57,6 +68,7 @@ impl Message {
             Self::Unchoke => 0x07,
             Self::Interested => 0x08,
             Self::NotInterested => 0x09,
+            Self::Pex { .. } => 0x0A,
         }
     }
 }
