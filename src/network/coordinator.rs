@@ -11,7 +11,9 @@ use tokio::sync::mpsc;
 use crate::core::merkle::{MerkleProof, MerkleTree};
 use crate::core::scheduler::{parse_bitfield_bytes, PeerId, Scheduler};
 use crate::core::swarm::SwarmIntel;
+use crate::network::discovery::pex::PexManager;
 use crate::network::pool::{ConnectionPool, PoolCommand, PoolEvent};
+use crate::protocol::messages::PexPeer;
 use crate::security::reputation::{FailureKind, ReputationManager};
 use crate::storage::writer::DiskWriter;
 
@@ -37,6 +39,7 @@ pub struct PeerStats {
     pub score: f64,
     pub strikes: u8,
     pub pipeline: usize,
+    pub source: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -49,6 +52,9 @@ pub struct DownloadProgress {
     pub complete: bool,
     pub peer_stats: Vec<PeerStats>,
     pub piece_rarity: Vec<u32>,
+    pub dht_nodes: usize,
+    pub dht_peers_found: usize,
+    pub pex_peers_found: usize,
 }
 
 impl DownloadProgress {
@@ -62,6 +68,9 @@ impl DownloadProgress {
             complete: false,
             peer_stats: Vec::new(),
             piece_rarity: vec![0; piece_count as usize],
+            dht_nodes: 0,
+            dht_peers_found: 0,
+            pex_peers_found: 0,
         }
     }
 }
@@ -139,8 +148,26 @@ impl DownloadCoordinator {
         let mut reputation = ReputationManager::new();
         let mut swarm = SwarmIntel::new();
         let mut request_timestamps: HashMap<u32, (PeerId, Instant)> = HashMap::new();
+        let mut peer_sources: HashMap<PeerId, String> = HashMap::new();
+
+        let mut pex_manager = PexManager::new();
+        let mut _dht_peers_found = 0usize;
+        let mut pex_peers_found = 0usize;
+
+        for addr in &self.peer_addrs {
+            let id_bytes: [u8; 20] = {
+                let mut h = [0u8; 20];
+                let b = addr.as_bytes();
+                for (i, byte) in b.iter().enumerate().take(20) {
+                    h[i] = *byte;
+                }
+                h
+            };
+            peer_sources.insert(id_bytes, "M".to_string());
+        }
 
         let mut stale_check = tokio::time::interval(tokio::time::Duration::from_millis(500));
+        let mut pex_tick = tokio::time::interval(tokio::time::Duration::from_secs(30));
 
         while !scheduler.is_complete() {
             let event = tokio::select! {
@@ -169,11 +196,29 @@ impl DownloadCoordinator {
                     }
                     continue;
                 }
+                _ = pex_tick.tick() => {
+                    let peer_list: Vec<PeerId> = unchoked_peers.iter().copied().collect();
+                    for peer_id in peer_list {
+                        let (added, dropped) = pex_manager.generate_pex(&peer_id);
+                        if !added.is_empty() || !dropped.is_empty() {
+                            let _ = cmd_tx.send(PoolCommand::SendPex { peer_id, added, dropped }).await;
+                        }
+                    }
+                    continue;
+                }
             };
 
             match event {
                 PoolEvent::PeerConnected { peer_id } => {
                     peers_used.insert(peer_id);
+                    if !peer_sources.contains_key(&peer_id) {
+                        peer_sources.insert(peer_id, "M".to_string());
+                    }
+                    pex_manager.add_peer(PexPeer {
+                        peer_id,
+                        addr: String::new(),
+                        score: 1.0,
+                    });
                     update_progress(&progress, &|p| p.peers_connected += 1);
                 }
                 PoolEvent::BitfieldReceived { peer_id, bitfield } => {
@@ -285,7 +330,21 @@ impl DownloadCoordinator {
                     unchoked_peers.remove(&peer_id);
                     reputation.remove_peer(&peer_id);
                     swarm.remove_peer(&peer_id);
+                    pex_manager.remove_peer(&peer_id);
+                    peer_sources.remove(&peer_id);
                     request_timestamps.retain(|_, (p, _)| *p != peer_id);
+                }
+                PoolEvent::PexReceived {
+                    peer_id: _,
+                    added,
+                    dropped,
+                } => {
+                    pex_peers_found += added.len();
+                    pex_manager.merge_received(added);
+                    for id in dropped {
+                        pex_manager.remove_peer(&id);
+                    }
+                    update_progress(&progress, &|p| p.pex_peers_found = pex_peers_found);
                 }
             }
 
@@ -298,6 +357,7 @@ impl DownloadCoordinator {
                     score: reputation.score(pid),
                     strikes: reputation.strike_level(pid),
                     pipeline: swarm.pipeline_depth(pid, &reputation),
+                    source: peer_sources.get(pid).cloned().unwrap_or_else(|| "M".to_string()),
                 })
                 .collect();
             let rarity: Vec<u32> = (0..piece_count)

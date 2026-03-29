@@ -4,7 +4,7 @@ use tokio::sync::mpsc;
 
 use crate::core::scheduler::PeerId;
 use crate::network::peer::{PeerConnection, PeerError};
-use crate::protocol::messages::Message;
+use crate::protocol::messages::{Message, PexPeer};
 
 #[derive(Debug)]
 pub enum PoolEvent {
@@ -34,6 +34,11 @@ pub enum PoolEvent {
     PeerDisconnected {
         peer_id: PeerId,
     },
+    PexReceived {
+        peer_id: PeerId,
+        added: Vec<PexPeer>,
+        dropped: Vec<[u8; 20]>,
+    },
 }
 
 #[derive(Debug)]
@@ -45,6 +50,11 @@ pub enum PoolCommand {
     UnchokePeer { peer_id: PeerId },
     SendInterested { peer_id: PeerId },
     DisconnectPeer { peer_id: PeerId },
+    SendPex {
+        peer_id: PeerId,
+        added: Vec<PexPeer>,
+        dropped: Vec<[u8; 20]>,
+    },
 }
 
 pub struct ConnectionPool {
@@ -145,6 +155,14 @@ impl ConnectionPool {
                 PoolCommand::DisconnectPeer { peer_id } => {
                     self.peer_txs.remove(&peer_id);
                 }
+                PoolCommand::SendPex {
+                    peer_id,
+                    added,
+                    dropped,
+                } => {
+                    self.send_to_peer(&peer_id, Message::Pex { added, dropped })
+                        .await;
+                }
             }
         }
     }
@@ -184,6 +202,7 @@ impl ConnectionPool {
                                 }
                                 Message::Choke => Some(PoolEvent::Choked { peer_id }),
                                 Message::Unchoke => Some(PoolEvent::Unchoked { peer_id }),
+                                Message::Pex { added, dropped } => Some(PoolEvent::PexReceived { peer_id, added, dropped }),
                                 _ => None,
                             };
                             if let Some(e) = event {

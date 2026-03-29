@@ -132,6 +132,7 @@ fn render(frame: &mut ratatui::Frame, view: &DashboardView) {
             Constraint::Length(3),
             Constraint::Length(3),
             Constraint::Length(3),
+            Constraint::Length(3),
             Constraint::Min(peer_rows),
             Constraint::Length(3),
         ])
@@ -176,6 +177,14 @@ fn render(frame: &mut ratatui::Frame, view: &DashboardView) {
         Paragraph::new(stats_text).block(Block::default().borders(Borders::ALL).title("Stats"));
     frame.render_widget(stats_widget, chunks[2]);
 
+    let dht_text = format!(
+        "DHT: {} nodes | {} via DHT | {} via PEX",
+        view.progress.dht_nodes, view.progress.dht_peers_found, view.progress.pex_peers_found,
+    );
+    let dht_widget = Paragraph::new(dht_text)
+        .block(Block::default().borders(Borders::ALL).title("Discovery"));
+    frame.render_widget(dht_widget, chunks[3]);
+
     let peer_lines: Vec<Line> = view
         .progress
         .peer_stats
@@ -207,15 +216,20 @@ fn render(frame: &mut ratatui::Frame, view: &DashboardView) {
             } else {
                 String::new()
             };
+            let source_tag = match p.source.as_str() {
+                "D" => "[D]",
+                "P" => "[P]",
+                _ => "[M]",
+            };
             Line::from(format!(
-                "  {}  {}  {}  score:{:.2}  [{}]{}",
-                id_short, bar, speed_text, p.score, p.pipeline, strike_str
+                "  {} {}  {}  {}  score:{:.2}  [{}]{}",
+                source_tag, id_short, bar, speed_text, p.score, p.pipeline, strike_str
             ))
         })
         .collect();
     let peers_widget =
         Paragraph::new(peer_lines).block(Block::default().borders(Borders::ALL).title("Peers"));
-    frame.render_widget(peers_widget, chunks[3]);
+    frame.render_widget(peers_widget, chunks[4]);
 
     let heatmap: String = view
         .progress
@@ -230,7 +244,7 @@ fn render(frame: &mut ratatui::Frame, view: &DashboardView) {
         .collect();
     let rarity_widget =
         Paragraph::new(heatmap).block(Block::default().borders(Borders::ALL).title("Rarity"));
-    frame.render_widget(rarity_widget, chunks[4]);
+    frame.render_widget(rarity_widget, chunks[5]);
 }
 
 #[cfg(test)]
