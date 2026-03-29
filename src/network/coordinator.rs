@@ -184,9 +184,14 @@ impl DownloadCoordinator {
                 PoolEvent::Unchoked { peer_id } => {
                     unchoked_peers.insert(peer_id);
                     request_pieces(
-                        &mut scheduler, &cmd_tx, &peer_id,
-                        &swarm, &reputation, &mut request_timestamps,
-                    ).await;
+                        &mut scheduler,
+                        &cmd_tx,
+                        &peer_id,
+                        &swarm,
+                        &reputation,
+                        &mut request_timestamps,
+                    )
+                    .await;
                 }
                 PoolEvent::Choked { peer_id } => {
                     unchoked_peers.remove(&peer_id);
@@ -217,7 +222,11 @@ impl DownloadCoordinator {
 
                         if let Some((req_peer, sent_at)) = request_timestamps.remove(&index) {
                             let duration = sent_at.elapsed();
-                            reputation.record_success(req_peer, data.len() as u64, duration.as_millis() as u64);
+                            reputation.record_success(
+                                req_peer,
+                                data.len() as u64,
+                                duration.as_millis() as u64,
+                            );
                             swarm.record_response(req_peer, duration.as_millis() as u64);
                         }
 
@@ -255,9 +264,14 @@ impl DownloadCoordinator {
 
                     if unchoked_peers.contains(&peer_id) {
                         request_pieces(
-                            &mut scheduler, &cmd_tx, &peer_id,
-                            &swarm, &reputation, &mut request_timestamps,
-                        ).await;
+                            &mut scheduler,
+                            &cmd_tx,
+                            &peer_id,
+                            &swarm,
+                            &reputation,
+                            &mut request_timestamps,
+                        )
+                        .await;
                     }
                 }
                 PoolEvent::HaveReceived { peer_id, index } => {
@@ -331,7 +345,8 @@ async fn request_pieces(
                         index: assignment.piece_index,
                     })
                     .await;
-                request_timestamps.insert(assignment.piece_index, (assignment.peer, Instant::now()));
+                request_timestamps
+                    .insert(assignment.piece_index, (assignment.peer, Instant::now()));
             }
             None => break,
         }

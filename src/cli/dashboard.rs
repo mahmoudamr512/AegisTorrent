@@ -228,8 +228,8 @@ fn render(frame: &mut ratatui::Frame, view: &DashboardView) {
             _ => "[██]",
         })
         .collect();
-    let rarity_widget = Paragraph::new(heatmap)
-        .block(Block::default().borders(Borders::ALL).title("Rarity"));
+    let rarity_widget =
+        Paragraph::new(heatmap).block(Block::default().borders(Borders::ALL).title("Rarity"));
     frame.render_widget(rarity_widget, chunks[4]);
 }
 

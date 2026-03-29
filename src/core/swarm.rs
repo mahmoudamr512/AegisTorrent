@@ -80,12 +80,9 @@ impl SwarmIntel {
         }
     }
 
-    pub fn stale_requests(
-        &self,
-        in_flight: &HashMap<u32, (PeerId, Instant)>,
-    ) -> Vec<u32> {
+    pub fn stale_requests(&self, in_flight: &HashMap<u32, (PeerId, Instant)>) -> Vec<u32> {
         let mut stale = Vec::new();
-        for (&piece, &(ref peer, ref sent_at)) in in_flight {
+        for (&piece, (peer, sent_at)) in in_flight {
             let avg_ms = self
                 .peer_response_times
                 .get(peer)
