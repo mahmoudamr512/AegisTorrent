@@ -15,6 +15,12 @@ enum Cli {
         path: String,
         #[arg(short, long, default_value = "127.0.0.1:6881")]
         listen: String,
+        #[arg(long)]
+        bootstrap: Vec<String>,
+        #[arg(long, default_value = "6882")]
+        dht_port: u16,
+        #[arg(long)]
+        no_dht: bool,
     },
     Download {
         hash: String,
@@ -28,6 +34,12 @@ enum Cli {
         total_size: u64,
         #[arg(long, default_value = "9090")]
         stats_port: u16,
+        #[arg(long)]
+        bootstrap: Vec<String>,
+        #[arg(long, default_value = "6882")]
+        dht_port: u16,
+        #[arg(long)]
+        no_dht: bool,
     },
 }
 
@@ -74,7 +86,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     match cli {
-        Cli::Seed { path, listen } => {
+        Cli::Seed {
+            path,
+            listen,
+            bootstrap,
+            dht_port,
+            no_dht,
+        } => {
             let peer_id = generate_peer_id();
             let seeder = Seeder::from_file(Path::new(&path), peer_id)?;
 
@@ -91,6 +109,54 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("Info hash: {hex_str}");
             println!("Listening on {listen}");
 
+            if !no_dht && !bootstrap.is_empty() {
+                use aegistorrent::network::discovery::dht::{DhtConfig, DhtNode};
+                use aegistorrent::network::discovery::routing::NodeId;
+                use aegistorrent::network::discovery::rpc::DhtMessage;
+                use std::net::SocketAddr;
+
+                let node_id: NodeId = peer_id[..20].try_into().unwrap();
+                let dht_listen = format!("0.0.0.0:{dht_port}");
+                let (dht_tx, _dht_rx) = tokio::sync::mpsc::channel(64);
+
+                let dht_config = DhtConfig {
+                    node_id,
+                    listen_addr: dht_listen,
+                    bootstrap_addrs: bootstrap.clone(),
+                };
+                let dht_node = DhtNode::new(dht_config, dht_tx);
+                let info_hash = hash;
+                let listen_port: u16 = listen
+                    .rsplit(':')
+                    .next()
+                    .and_then(|p| p.parse().ok())
+                    .unwrap_or(6881);
+
+                println!("DHT: announcing on {} bootstrap node(s)", bootstrap.len());
+                tokio::spawn(async move {
+                    let socket = match tokio::net::UdpSocket::bind("0.0.0.0:0").await {
+                        Ok(s) => s,
+                        Err(_) => return,
+                    };
+                    let msg = DhtMessage::AnnouncePeer {
+                        sender: node_id,
+                        info_hash,
+                        peer_port: listen_port,
+                        score: 1.0,
+                    };
+                    let encoded = msg.encode();
+                    loop {
+                        for addr_str in &bootstrap {
+                            if let Ok(addr) = addr_str.parse::<SocketAddr>() {
+                                let _ = socket.send_to(&encoded, addr).await;
+                            }
+                        }
+                        tokio::time::sleep(std::time::Duration::from_secs(300)).await;
+                    }
+                });
+                tokio::spawn(dht_node.run());
+            }
+
             seeder.listen(&listen).await?;
         }
         Cli::Download {
@@ -100,19 +166,75 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             piece_size,
             total_size,
             stats_port,
+            bootstrap,
+            dht_port,
+            no_dht,
         } => {
             let info_hash = parse_hex_hash(&hash)?;
             let peer_id = generate_peer_id();
 
-            if peers.is_empty() {
-                eprintln!("Error: at least one --peer is required");
+            let mut all_peers = peers.clone();
+            let mut dht_addrs: Vec<String> = Vec::new();
+
+            if !no_dht && !bootstrap.is_empty() {
+                use aegistorrent::network::discovery::dht::{DhtConfig, DhtEvent, DhtNode};
+                use aegistorrent::network::discovery::routing::{NodeId, NodeInfo};
+
+                let node_id: NodeId = peer_id[..20].try_into().unwrap();
+                let dht_listen = format!("0.0.0.0:{dht_port}");
+                let (dht_tx, mut dht_rx) = tokio::sync::mpsc::channel(64);
+
+                let initial_nodes: Vec<NodeInfo> = bootstrap
+                    .iter()
+                    .enumerate()
+                    .map(|(i, addr)| {
+                        let mut id = [0u8; 20];
+                        id[0] = i as u8;
+                        NodeInfo {
+                            id,
+                            addr: addr.clone(),
+                        }
+                    })
+                    .collect();
+
+                println!(
+                    "DHT: looking up peers from {} bootstrap node(s)...",
+                    bootstrap.len()
+                );
+
+                let socket = tokio::net::UdpSocket::bind("0.0.0.0:0").await?;
+                DhtNode::find_peers(&socket, node_id, info_hash, initial_nodes, dht_tx.clone())
+                    .await;
+                drop(socket);
+
+                while let Ok(DhtEvent::PeersFound { peers: found, .. }) = dht_rx.try_recv() {
+                    for entry in found {
+                        if !all_peers.contains(&entry.addr) {
+                            println!("DHT: found peer {}", entry.addr);
+                            dht_addrs.push(entry.addr.clone());
+                            all_peers.push(entry.addr);
+                        }
+                    }
+                }
+
+                let dht_config = DhtConfig {
+                    node_id,
+                    listen_addr: dht_listen,
+                    bootstrap_addrs: bootstrap,
+                };
+                let dht_node = DhtNode::new(dht_config, dht_tx);
+                tokio::spawn(dht_node.run());
+            }
+
+            if all_peers.is_empty() {
+                eprintln!("Error: no peers found (specify --peer or use --bootstrap for DHT)");
                 std::process::exit(1);
             }
 
             if total_size == 0 {
                 let leecher = Leecher::new(info_hash, peer_id, output);
-                println!("Connecting to {}...", peers[0]);
-                let result = leecher.download(&peers[0]).await?;
+                println!("Connecting to {}...", all_peers[0]);
+                let result = leecher.download(&all_peers[0]).await?;
                 println!(
                     "Downloaded {} ({} pieces verified)",
                     format_size(result.bytes_downloaded),
@@ -126,7 +248,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let piece_count = (total_size as usize).div_ceil(piece_size) as u32;
                 let progress = Arc::new(Mutex::new(DownloadProgress::new(piece_count, total_size)));
 
-                println!("Connecting to {} peer(s)...", peers.len());
+                println!("Connecting to {} peer(s)...", all_peers.len());
 
                 let coordinator = DownloadCoordinator::new(
                     info_hash,
@@ -134,7 +256,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     piece_size,
                     total_size,
                     std::path::PathBuf::from(&output),
-                    peers,
+                    all_peers,
+                    dht_addrs,
                 );
 
                 let progress_for_download = Arc::clone(&progress);
