@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -24,6 +24,7 @@ pub struct DownloadCoordinator {
     total_size: u64,
     output_path: PathBuf,
     peer_addrs: Vec<String>,
+    dht_addrs: HashSet<String>,
 }
 
 pub struct DownloadResult {
@@ -83,6 +84,7 @@ impl DownloadCoordinator {
         total_size: u64,
         output_path: PathBuf,
         peer_addrs: Vec<String>,
+        dht_addrs: Vec<String>,
     ) -> Self {
         Self {
             info_hash,
@@ -91,6 +93,7 @@ impl DownloadCoordinator {
             total_size,
             output_path,
             peer_addrs,
+            dht_addrs: dht_addrs.into_iter().collect(),
         }
     }
 
@@ -151,20 +154,14 @@ impl DownloadCoordinator {
         let mut peer_sources: HashMap<PeerId, String> = HashMap::new();
 
         let mut pex_manager = PexManager::new();
-        let mut _dht_peers_found = 0usize;
+        let dht_peers_found = self.dht_addrs.len();
+        let dht_node_count = dht_peers_found;
         let mut pex_peers_found = 0usize;
 
-        for addr in &self.peer_addrs {
-            let id_bytes: [u8; 20] = {
-                let mut h = [0u8; 20];
-                let b = addr.as_bytes();
-                for (i, byte) in b.iter().enumerate().take(20) {
-                    h[i] = *byte;
-                }
-                h
-            };
-            peer_sources.insert(id_bytes, "M".to_string());
-        }
+        update_progress(&progress, &|p| {
+            p.dht_nodes = dht_node_count;
+            p.dht_peers_found = dht_peers_found;
+        });
 
         let mut stale_check = tokio::time::interval(tokio::time::Duration::from_millis(500));
         let mut pex_tick = tokio::time::interval(tokio::time::Duration::from_secs(30));
@@ -209,9 +206,14 @@ impl DownloadCoordinator {
             };
 
             match event {
-                PoolEvent::PeerConnected { peer_id } => {
+                PoolEvent::PeerConnected { peer_id, addr } => {
                     peers_used.insert(peer_id);
-                    peer_sources.entry(peer_id).or_insert_with(|| "M".to_string());
+                    let source = if self.dht_addrs.contains(&addr) {
+                        "D".to_string()
+                    } else {
+                        "M".to_string()
+                    };
+                    peer_sources.entry(peer_id).or_insert(source);
                     pex_manager.add_peer(PexPeer {
                         peer_id,
                         addr: String::new(),
@@ -337,12 +339,27 @@ impl DownloadCoordinator {
                     added,
                     dropped,
                 } => {
+                    for peer in &added {
+                        if !unchoked_peers.contains(&peer.peer_id)
+                            && !reputation.is_banned(&peer.peer_id)
+                        {
+                            let _ = cmd_tx
+                                .send(PoolCommand::ConnectPeer {
+                                    addr: peer.addr.clone(),
+                                })
+                                .await;
+                            peer_sources.insert(peer.peer_id, "P".to_string());
+                        }
+                    }
                     pex_peers_found += added.len();
                     pex_manager.merge_received(added);
                     for id in dropped {
                         pex_manager.remove_peer(&id);
                     }
-                    update_progress(&progress, &|p| p.pex_peers_found = pex_peers_found);
+                    update_progress(&progress, &|p| {
+                        p.pex_peers_found = pex_peers_found;
+                        p.dht_peers_found = dht_peers_found;
+                    });
                 }
             }
 

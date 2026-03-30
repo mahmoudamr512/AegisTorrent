@@ -174,6 +174,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let peer_id = generate_peer_id();
 
             let mut all_peers = peers.clone();
+            let mut dht_addrs: Vec<String> = Vec::new();
 
             if !no_dht && !bootstrap.is_empty() {
                 use aegistorrent::network::discovery::dht::{DhtConfig, DhtEvent, DhtNode};
@@ -210,6 +211,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     for entry in found {
                         if !all_peers.contains(&entry.addr) {
                             println!("DHT: found peer {}", entry.addr);
+                            dht_addrs.push(entry.addr.clone());
                             all_peers.push(entry.addr);
                         }
                     }
@@ -255,6 +257,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     total_size,
                     std::path::PathBuf::from(&output),
                     all_peers,
+                    dht_addrs,
                 );
 
                 let progress_for_download = Arc::clone(&progress);

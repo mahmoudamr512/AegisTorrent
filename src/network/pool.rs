@@ -10,6 +10,7 @@ use crate::protocol::messages::{Message, PexPeer};
 pub enum PoolEvent {
     PeerConnected {
         peer_id: PeerId,
+        addr: String,
     },
     BitfieldReceived {
         peer_id: PeerId,
@@ -71,6 +72,9 @@ pub enum PoolCommand {
         added: Vec<PexPeer>,
         dropped: Vec<[u8; 20]>,
     },
+    ConnectPeer {
+        addr: String,
+    },
 }
 
 pub struct ConnectionPool {
@@ -117,8 +121,12 @@ impl ConnectionPool {
 
         self.peer_txs.insert(remote_id, peer_cmd_tx);
 
+        let addr_owned = addr.to_string();
         let _ = event_tx
-            .send(PoolEvent::PeerConnected { peer_id: remote_id })
+            .send(PoolEvent::PeerConnected {
+                peer_id: remote_id,
+                addr: addr_owned,
+            })
             .await;
 
         tokio::spawn(async move {
@@ -178,6 +186,34 @@ impl ConnectionPool {
                 } => {
                     self.send_to_peer(&peer_id, Message::Pex { added, dropped })
                         .await;
+                }
+                PoolCommand::ConnectPeer { addr } => {
+                    let stream = match TcpStream::connect(&addr).await {
+                        Ok(s) => s,
+                        Err(_) => continue,
+                    };
+                    let mut conn = PeerConnection::new(stream);
+                    let remote_id =
+                        match conn.handshake(self.info_hash, self.our_peer_id).await {
+                            Ok(id) => id,
+                            Err(_) => continue,
+                        };
+                    conn.send(Message::Bitfield(self.our_bitfield.clone()))
+                        .await
+                        .ok();
+                    let event_tx = self.event_tx.clone();
+                    let (peer_cmd_tx, mut peer_cmd_rx) = mpsc::channel::<PeerCommand>(32);
+                    self.peer_txs.insert(remote_id, peer_cmd_tx);
+                    let _ = event_tx
+                        .send(PoolEvent::PeerConnected {
+                            peer_id: remote_id,
+                            addr,
+                        })
+                        .await;
+                    tokio::spawn(async move {
+                        Self::peer_loop(remote_id, &mut conn, &event_tx, &mut peer_cmd_rx)
+                            .await;
+                    });
                 }
             }
         }
