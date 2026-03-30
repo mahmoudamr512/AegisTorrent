@@ -4,12 +4,13 @@ use tokio::sync::mpsc;
 
 use crate::core::scheduler::PeerId;
 use crate::network::peer::{PeerConnection, PeerError};
-use crate::protocol::messages::Message;
+use crate::protocol::messages::{Message, PexPeer};
 
 #[derive(Debug)]
 pub enum PoolEvent {
     PeerConnected {
         peer_id: PeerId,
+        addr: String,
     },
     BitfieldReceived {
         peer_id: PeerId,
@@ -34,17 +35,46 @@ pub enum PoolEvent {
     PeerDisconnected {
         peer_id: PeerId,
     },
+    PexReceived {
+        peer_id: PeerId,
+        added: Vec<PexPeer>,
+        dropped: Vec<[u8; 20]>,
+    },
 }
 
 #[derive(Debug)]
 pub enum PoolCommand {
-    RequestPiece { peer_id: PeerId, index: u32 },
-    CancelPiece { peer_id: PeerId, index: u32 },
-    SendHave { index: u32 },
-    ChokePeer { peer_id: PeerId },
-    UnchokePeer { peer_id: PeerId },
-    SendInterested { peer_id: PeerId },
-    DisconnectPeer { peer_id: PeerId },
+    RequestPiece {
+        peer_id: PeerId,
+        index: u32,
+    },
+    CancelPiece {
+        peer_id: PeerId,
+        index: u32,
+    },
+    SendHave {
+        index: u32,
+    },
+    ChokePeer {
+        peer_id: PeerId,
+    },
+    UnchokePeer {
+        peer_id: PeerId,
+    },
+    SendInterested {
+        peer_id: PeerId,
+    },
+    DisconnectPeer {
+        peer_id: PeerId,
+    },
+    SendPex {
+        peer_id: PeerId,
+        added: Vec<PexPeer>,
+        dropped: Vec<[u8; 20]>,
+    },
+    ConnectPeer {
+        addr: String,
+    },
 }
 
 pub struct ConnectionPool {
@@ -91,8 +121,12 @@ impl ConnectionPool {
 
         self.peer_txs.insert(remote_id, peer_cmd_tx);
 
+        let addr_owned = addr.to_string();
         let _ = event_tx
-            .send(PoolEvent::PeerConnected { peer_id: remote_id })
+            .send(PoolEvent::PeerConnected {
+                peer_id: remote_id,
+                addr: addr_owned,
+            })
             .await;
 
         tokio::spawn(async move {
@@ -145,6 +179,42 @@ impl ConnectionPool {
                 PoolCommand::DisconnectPeer { peer_id } => {
                     self.peer_txs.remove(&peer_id);
                 }
+                PoolCommand::SendPex {
+                    peer_id,
+                    added,
+                    dropped,
+                } => {
+                    self.send_to_peer(&peer_id, Message::Pex { added, dropped })
+                        .await;
+                }
+                PoolCommand::ConnectPeer { addr } => {
+                    let stream = match TcpStream::connect(&addr).await {
+                        Ok(s) => s,
+                        Err(_) => continue,
+                    };
+                    let mut conn = PeerConnection::new(stream);
+                    let remote_id =
+                        match conn.handshake(self.info_hash, self.our_peer_id).await {
+                            Ok(id) => id,
+                            Err(_) => continue,
+                        };
+                    conn.send(Message::Bitfield(self.our_bitfield.clone()))
+                        .await
+                        .ok();
+                    let event_tx = self.event_tx.clone();
+                    let (peer_cmd_tx, mut peer_cmd_rx) = mpsc::channel::<PeerCommand>(32);
+                    self.peer_txs.insert(remote_id, peer_cmd_tx);
+                    let _ = event_tx
+                        .send(PoolEvent::PeerConnected {
+                            peer_id: remote_id,
+                            addr,
+                        })
+                        .await;
+                    tokio::spawn(async move {
+                        Self::peer_loop(remote_id, &mut conn, &event_tx, &mut peer_cmd_rx)
+                            .await;
+                    });
+                }
             }
         }
     }
@@ -184,6 +254,7 @@ impl ConnectionPool {
                                 }
                                 Message::Choke => Some(PoolEvent::Choked { peer_id }),
                                 Message::Unchoke => Some(PoolEvent::Unchoked { peer_id }),
+                                Message::Pex { added, dropped } => Some(PoolEvent::PexReceived { peer_id, added, dropped }),
                                 _ => None,
                             };
                             if let Some(e) = event {

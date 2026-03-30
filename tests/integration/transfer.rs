@@ -88,6 +88,7 @@ async fn multi_peer_download() {
         size as u64,
         output_path.clone(),
         vec![addr1, addr2],
+        vec![],
     );
 
     let result = coordinator.run(None).await.unwrap();

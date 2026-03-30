@@ -72,6 +72,27 @@ impl Encoder<Message> for LengthPrefixCodec {
                 dst.put_u8(msg_type);
                 dst.put_u32(index);
             }
+            Message::Pex { added, dropped } => {
+                let mut payload_len = 2usize;
+                for p in &added {
+                    payload_len += 20 + 1 + p.addr.len() + 8;
+                }
+                payload_len += 2;
+                payload_len += dropped.len() * 20;
+                dst.put_u32(1 + payload_len as u32);
+                dst.put_u8(msg_type);
+                dst.put_u16(added.len() as u16);
+                for p in &added {
+                    dst.put_slice(&p.peer_id);
+                    dst.put_u8(p.addr.len() as u8);
+                    dst.put_slice(p.addr.as_bytes());
+                    dst.put_f64(p.score);
+                }
+                dst.put_u16(dropped.len() as u16);
+                for id in &dropped {
+                    dst.put_slice(id);
+                }
+            }
             Message::Choke | Message::Unchoke | Message::Interested | Message::NotInterested => {
                 dst.put_u32(1);
                 dst.put_u8(msg_type);
@@ -212,6 +233,62 @@ impl Decoder for LengthPrefixCodec {
             0x07 => Ok(Some(Message::Unchoke)),
             0x08 => Ok(Some(Message::Interested)),
             0x09 => Ok(Some(Message::NotInterested)),
+            0x0A => {
+                use super::messages::PexPeer;
+                if payload.len() < 2 {
+                    return Err(MessageError::BufferTooShort {
+                        need: 2,
+                        have: payload.len(),
+                    });
+                }
+                let count_added = payload.get_u16() as usize;
+                let mut added = Vec::with_capacity(count_added);
+                for _ in 0..count_added {
+                    if payload.len() < 21 {
+                        return Err(MessageError::BufferTooShort {
+                            need: 21,
+                            have: payload.len(),
+                        });
+                    }
+                    let mut peer_id = [0u8; 20];
+                    payload.copy_to_slice(&mut peer_id);
+                    let addr_len = payload.get_u8() as usize;
+                    if payload.len() < addr_len + 8 {
+                        return Err(MessageError::BufferTooShort {
+                            need: addr_len + 8,
+                            have: payload.len(),
+                        });
+                    }
+                    let addr_bytes = payload.split_to(addr_len);
+                    let addr = String::from_utf8_lossy(&addr_bytes).into_owned();
+                    let score = payload.get_f64();
+                    added.push(PexPeer {
+                        peer_id,
+                        addr,
+                        score,
+                    });
+                }
+                if payload.len() < 2 {
+                    return Err(MessageError::BufferTooShort {
+                        need: 2,
+                        have: payload.len(),
+                    });
+                }
+                let count_dropped = payload.get_u16() as usize;
+                let mut dropped = Vec::with_capacity(count_dropped);
+                for _ in 0..count_dropped {
+                    if payload.len() < 20 {
+                        return Err(MessageError::BufferTooShort {
+                            need: 20,
+                            have: payload.len(),
+                        });
+                    }
+                    let mut peer_id = [0u8; 20];
+                    payload.copy_to_slice(&mut peer_id);
+                    dropped.push(peer_id);
+                }
+                Ok(Some(Message::Pex { added, dropped }))
+            }
             other => Err(MessageError::UnknownType(other)),
         }
     }
@@ -292,6 +369,36 @@ mod tests {
         ] {
             assert_eq!(roundtrip(msg.clone()), msg);
         }
+    }
+
+    #[test]
+    fn roundtrip_pex() {
+        use super::super::messages::PexPeer;
+        let msg = Message::Pex {
+            added: vec![
+                PexPeer {
+                    peer_id: [1; 20],
+                    addr: "127.0.0.1:6001".to_string(),
+                    score: 0.95,
+                },
+                PexPeer {
+                    peer_id: [2; 20],
+                    addr: "10.0.0.1:8080".to_string(),
+                    score: 0.5,
+                },
+            ],
+            dropped: vec![[3; 20], [4; 20]],
+        };
+        assert_eq!(roundtrip(msg.clone()), msg);
+    }
+
+    #[test]
+    fn roundtrip_pex_empty() {
+        let msg = Message::Pex {
+            added: vec![],
+            dropped: vec![],
+        };
+        assert_eq!(roundtrip(msg.clone()), msg);
     }
 
     #[test]
